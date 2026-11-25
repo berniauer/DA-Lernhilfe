@@ -1,0 +1,302 @@
+<!-- Quelle: Arbeitsblätter, Übungen, Daten, Sourcecode/Arbeitsblätter (Skriptum)/Sourcecode/02a-Lineare-Regression-mit-Bayes.Rmd (R Markdown, Code-Chunks = ```{r}) -->
+
+---
+title: 'Lineare Regression mit Bayes'
+author: "Arno Hollosi"
+lang: "de"
+papersize: A4
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    includes:
+      in_header: my-styles.tex
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(ggplot2)
+library(rstanarm)
+library(shape)
+library(daatools)
+# options(mc.cores = parallel::detectCores())
+knitr::opts_chunk$set(echo = TRUE, fig.width=7, fig.height=4)
+```
+
+# Motivation
+
+Wir wollen nun Regressionsmodelle aufstellen, welche die Bayessche Statistik als Grundlage haben. Als Library verwenden wir MC-Stan (https://mc-stan.org/). Da diese Library eine C-Compiler benötigt, verwenden wir stattdessen ein R-Paket, welches vordefinierte, generische Modelle bereithalt (`rstanarm`), damit wir nicht selber kompilieren müssen.
+
+
+## Hintergrund: Berechnungen bei Bayes
+
+Der Satz von Bayes $p(A|B) = \frac{p(B|A) \times p(A)}{p(B)}$ erlaubt es uns, eine Wahrscheinlichkeit (=Koeffizienten des Modells) anhand von Daten/Messreihen und eines Priors (Vorwissen) zu berechnen. Die zu lösende Frage lautet: Welche Koeffizienten sind bei einem gegebenen Modell *wahrscheinlich*, wenn die gemessenen Daten vorliegen[^1]?
+
+[^1]: Bei der herkömlichen (frequentistischen) Statistik ist das Ergebnis nicht die Wahrscheinlichkeit des Modells, sondern die Wahrscheinlichkeit dass die vorliegenden *Daten* zu erwarten sind, unter Annahme dass das Modell stimmt. Das ist typischerweise nicht die Frage, die uns interessiert.
+
+Bei Regressionsmodellen ist im allgemeinen Fall die Bayes-Formel nicht analytisch lösbar, d.h. nicht direkt berechenbar. Abhilfe: man löst die Formel numerisch, d.h. man nimmt Proben (Samples) an bestimmten Stellen und errechnet so näherungsweise das Ergebnis (vgl. auch Arbeitsblatt *01a-Schlussfolgern-mit-Bayes*).
+
+MC-Stan verwendet für das Sampling ein **MCMC**-Verfahren (*Markov Chain Monte Carlo*). Damit können mit wenigen Samples (Standard: 4000 Samples) die Koeffizienten von Regressionsmodellen gut vorhergesagt werden. Da das Sampling Zufall verwendet, unterscheiden sich die Ergebnisse immer leicht voneinander (2-3%).
+
+# Lineare Regression
+
+Die lineare Regression (wie im Arbeitsblatt *Wiederholung-Basiswissen* beschrieben) versucht folgende Gleichung möglichst optimal (d.h. mit kleinstmöglichen Abweichungen (Residuen)) zu lösen:
+$$y \sim \alpha + \beta x + \epsilon$$
+Wobei $y$ eine metrische Variable ist, $\alpha$ für den Intercept steht und $\beta x$ für die unabhängige Variable $x$ mit Koeffizient $\beta$. $x$ muss weder metrisch, noch normalverteilt sein. Der Fehler $\epsilon$ beschreibt jene Umwelteinflüsse, die vom Modell nicht erfasst werden oder fehlende unabhängige Variable etc.
+
+Die klassiche (frequentistische) Regression berechnet $p(\mathbb Y|\theta)$, d.h. wie wahrscheinlich die vorliegende Datenreihe $\mathbb Y = (y, x)$ zu erwarten ist, unter der Annahme, dass die Koeffizienten des Modells den Wert $\theta = (\alpha, \beta)$ haben. Die p-Werte, welche bei der `summary()` eines mit `lm()` berechneten Modells ausgegeben werden (und die daraus abgeleiteten Sternchen), gehen von $\theta = 0$ aus, also von der Nullhypothese. Nur wenn die tatsächlichen Koeffizienten so stark von Null abweichen, dass die Wahrscheinlichkeit, die vorliegende (oder extremere) Datenreihe zu sehen, unter 5% (0.05) sinkt, spricht man klassicherweise von *statistisch signifikant*. Unter anderem schließt dann das 95%-Konfidenzintervall des Koeffizienten den Nullwert selbst nicht mehr ein.
+
+Allerdings ist das typischerweise nicht die Frage, die uns interessiert! Viel eher wollen wir $p(\theta|\mathbb Y)$ wissen: wie wahrscheinlich sind unsere Koeffizienten $\theta$ des Modells auf Basis der vorliegenden Datenreihe $\mathbb Y$. Mit der Bayes-Formel lässt sich diese Wahrscheinlichkeit ableiten, allerdings müssen wir einen Prior wählen -- also eine Wahrscheinlichkeitsverteilung für unser Vorwissen mit ins Modell aufnehmen.
+
+
+# Beispiel: Eisfläche der Arktis
+
+Dass das arktische Eis schmilzt, ist durch viele Messungen bestätigt worden. Der vorliegende Datensatz gibt die Gesamtfläche des arktischen Eises in Mio km² an, gemessen im September des jeweiligen Jahres. Ein einfaches (frequentistisches) lineares Regressionsmodell sähe wie folgt aus:
+
+```{r}
+arctic_ice = read.csv('daten/arctic-sea-ice-extent.csv', stringsAsFactors = TRUE)
+arctic_ice$year2k = arctic_ice$year - 2000
+lm(extent ~ year2k, data=arctic_ice)
+```
+
+Pro Jahr gehen (laut Modell) 92.000 km² Eis verloren. Damit der Intercept aussagekräftig ist, haben wir das Jahr 2000 als Referenz genommen (`year2k=0`). Dann gibt der Intercept die Ausdehnung des Eises zur Jahrtausendwende an, nämlich 6.02 Mio km².[^2]
+
+[^2]: Die 6.02 Mio km² stimmen allerdings nicht mit der tatsächlichen Ausdehnung im Jahr 2000 laut Datensatz überein (6.32 Mio km²). Grund ist, dass die Regressionsgerade den Weg der minimalen Abweichung sucht und das Jahr 0 (bzw. Jahr 2000) nicht speziell behandelt.
+
+Mit einem Bayes-Modell wäre unser Posterior nun zweidimensional: 1x für den Intercept und 1x für den Koeffizienten von year2k. Der Posterior des Modells sieht nach den 34 Datensätzen so aus (als Heatmap bzw. 3D-Darstellung):
+
+```{r echo=FALSE, fig.height=5, dev="png", dpi=100}
+# wir samplen 1000 Punkte je Koeffizient
+# Die Sample-Sequenzen wurden wieder so gewählt, dass die Graphen gut aussehen :o)
+alpha_seq = seq(5.8, 6.2, length.out = 501)
+beta_seq = seq(-0.15, -0.05, length.out = 501)
+# 2D Prior & Likelihood
+prior = matrix(1/101^2, nrow=501, ncol=501)
+likelihood = matrix(nrow=501, ncol=501)
+
+for (i in 1:nrow(arctic_ice)) { # für jeden Datensatz (jedes Jahr)
+  for (j in 1:501) {            # für jeden Alpha-Schritt
+    # je Zeile gleiches Alpha (und implizit: je Spalte gleiches Beta)
+    likelihood[j, ] = dnorm(x = arctic_ice$extent[i],
+                            mean = alpha_seq[j] + beta_seq*arctic_ice$year2k[i],
+                            sd = 0.185)
+  }
+  posterior = likelihood * prior # Bayessche Regel
+  posterior = posterior / sum(posterior)
+  prior = posterior # Posterior == Prior für nächsten Schritt
+}
+
+lattice::levelplot(posterior, row.values=alpha_seq, column.values=beta_seq,aspect='fill',
+          xlim=c(5.8,6.2), ylim=c(-0.12,-0.07), xlab="Intercept", ylab="year",
+          col.regions = viridisLite::viridis(100))
+```
+
+```{r echo=FALSE}
+# Berechnung
+# library(plotly)
+# library(dplyr)
+#
+# plot_ly(x=beta_seq, y=alpha_seq, z=posterior) %>% add_surface() %>%
+#   layout(scene = list(yaxis = list(autorange='reversed')))
+```
+
+![3D-Ansicht des Posteriors](./01b-3D-Posterior-IceExtent.png){height=45%}
+
+Um an die Verteilung für die beiden Werte (Intercept und year2k) zu kommen, müssen wir die sogenannte *marginal distribution* berechnen, also eine Aufsummierung entlang der Achsen durchführen:
+
+```{r}
+intercept = rowSums(posterior)
+year_coef = colSums(posterior)
+```
+```{r echo=FALSE}
+par(mfcol=c(1,2), mar=c(2,2,2,2))
+plot(alpha_seq, intercept, type='h', frame.plot = F, yaxt='n', 
+     col='steelblue', xlim=c(5.85, 6.18), main="Intercept")
+showHDI(alpha_seq, intercept)
+plot(beta_seq, year_coef, type='h', frame.plot = F, yaxt='n',
+     col='steelblue', xlim=c(-0.11, -0.075), main="year2k")
+showHDI(beta_seq, year_coef)
+```
+
+Unser Modell sagt also vorher, dass im Jahr 2000 5.9..6.1 Mio km² Eisfläche vorhanden war (Intercept, mit `year2k=0`) und pro Jahr 86000..98000 km² Eisfläche verloren gehen.
+
+### Berechnung mit MC-Stan
+
+Setzen wir obiges Beispiel fort, also die Ausdehnung des arktischen Eises.
+
+```{r}
+# Alle möglichen Parameter einmal voll ausgeschrieben
+modell1 = stan_glm(
+  formula = extent ~ year2k,
+  data = arctic_ice,
+  family = gaussian(link='identity'), # Art der Regression bzw. der Residuen
+  chains = 4,                         # wir lassen vier Sampling-Durchläufe berechnen
+  iter = 2000,                        # es werden 2000 Samples je Durchlauf genommen
+  warmup = 1000,                      # die Hälfte davon als Warmup
+  thin = 1,                           # jedes Sample wird für Posterior hergenommen
+  seed = 1234,                        # Startwert für den Zufallsgenerator
+  prior_intercept = normal(5.5, 1),   # Prior für den Intercept
+  prior = normal(0, 0.2),             # Prior für die Koeffizienten
+  prior_aux = exponential(3/1),       # Prior für sigma
+  refresh = 0                         # Ohne Sampling-Fortschritt anzuzeigen
+)
+
+summary(modell1, digits=2)
+```
+
+Das Ergebnis sind wieder ähnliche Werte für Intercept und `year2k` wie in unseren vorherigen Berechnungen.
+
+# Beispiel: Körpermaße
+
+Sehen wir uns als weiteres Beispiel den Körpermaß-Datensatzes an:
+
+```{r}
+# Daten von: Heinz et al.: Exploring Relationships in Body Dimensions,
+#                          Journal of Statistics Education Volume 11, Number 2 (2003)
+# http://ww2.amstat.org/publications/jse/v11n2/datasets.heinz.html
+body = read.csv('daten/body-dimensions.csv', stringsAsFactors = TRUE)
+
+# reduzieren der Daten auf verwendete Spalten
+body = body[, c('Weight', 'Height', 'Age', 'Gender')]
+info(body)
+```
+Wir interessieren uns für das Körpergewicht in Abhängigkeit der anderen Variablen. Dabei zentrieren wir wieder die metrischen Variablen, sodass der Basisfall eine sinnvolle Bedeutung hat. Das lineare Modell mit drei unabhängigen Variablen sieht dann so aus:
+
+```{r message=FALSE, warning=FALSE}
+body$Height170 = body$Height - 170
+body$Age30 = body$Age - 30
+
+modell2 = stan_glm(Weight ~ Height170 + Age30 + Gender,
+                   data=body, seed=123, refresh=0)
+print(modell2, digits=2)
+```
+Der Kopf der Ausgabe gibt uns allgemeine Information zum Modell:
+
+* `family: gaussian [identity]`: es handelt sich um eine gewöhnliche lineare Regression, bei der wir davon ausgehen, dass der Modellfehler $\epsilon$ in etwa normalverteilt (*gaussian*) ist.
+* `observations: 507`: Anzahl der Datensätze
+* `predictors: 4`: Anzahl der Koeffizienten (`Height170`, `Age30`, `GenderMale` und `Intercept`)
+
+## Koeffizienten
+
+Wird das Modell mit `print` anstelle mit `summary` ausgegeben, werden die Koeffizienten nicht als Mittelwerte mit Standardabweichung angegeben, sondern als Median plus `MAD_SD`; das steht für den Median der absoluten Abweichung (*median absolute deviation*) vom mittleren Median[^3]. Hintergrund für die Wahl von Median + MAD ist, dass der Median "stabiler" als der Mittelwert ist (insbesondere was kleine Datensätze und schieflastige Verteilungen betrifft).
+
+[^3]: Median der absolute Abweichung vom Median: $M = median(z_i)$ und $MAD\_SD=1.48*median(|z_i - M|)$ für eine Datenreihe $z_i$. Der Faktor 1.48 kommt daher, dass das resultierende MAD-Intervall der Standardabweichung bei einer Normalverteilung entsprechen soll.
+
+In unserem Beispiel hat also der Intercept einen Wert von 64.6 kg mit einem MAD_SD von 0.63 kg. D.h. 95% aller wahrscheinlichen Werte liegen *in etwa* im Bereich $64.6 \pm 2 \times 0.63$ kg. 
+
+Der Intercept ist der **Basisfall**, wenn alle unabhängigen Variablen gleich Null sind bzw. bei Faktoren der Referenzfall sind. In unserem Fall also `Height170=0` (entspricht `Height=170`), `Age30=0` (entspricht `Age=30`) und `Gender=Female` (erste Gruppe im Gender-Faktor). Der Basisfall ist also eine 170cm große, 30 Jahre alte Frau. Sie wiegt 64.6kg.
+
+Die Koeffizienten für Height und Age geben die "Steigung der Geraden" an. `Height170=0.73` bedeutet, dass je 1cm Unterschied das Gewicht um 0.73kg zunimmt. Bzw. genauer: bei zwei ansonsten gleichen Personen, deren Größe sich um 1cm unterscheidet, unterscheidet sich das Gewicht um $0.73 \pm 0.12$kg. Analog bei `Age30=0.18`: je 1 Jahr Altersunterschied nimmt das Gewicht um $0.18 \pm 0.08$kg zu.
+
+Für Gruppen geben die Koeffizienten die Differenz zum Basisfall (= zur Referenzgruppe) an. Bei Gender ist `female` die Referenzgruppe (sie ist im Intercept enthalten). Bleibt also ein Koeffizient für die `male`-Gruppe, `GenderMale=7.65`. Interpretation: im Vergleich zu Frauen (=die Referenzgruppe) sind ansonsten gleiche Männer (gleiches Alter, gleiche Größe) um $7.65 \pm 2.1$kg schwerer.
+
+Der *auxiliary parameter* $\sigma$ gibt die Standardabweichung der Residuen an. Da deren Mittelwert Null ist, kann man daraus die durchschnittliche Größe der Residuen ableiten; einzelne Vorhersagen weichen im Schnitt also ca. 8kg vom wirklichen Gewicht ab.
+
+Die Aussagen gelten alle auf Basis des vorliegenden Datensatzes, der aus College-Studierenden in den USA besteht, also nicht repräsentativ für die gesamte Bevölkerung ist.
+
+
+## Intervalle
+
+Genaue Intervalle können entweder mit `posterior_interval(modell)` berechnet werden (berechnet Quantillen der Verteilung) oder (in der LV bevorzugt) **Highest Density Interval**, das Interval der wahrscheinlichsten Werte, berechnet mit `hdi(modell)`. Die Intervalle weichen typischerweise nur geringfügig voneinander ab:
+
+```{r echo=FALSE}
+hdi_m2 = hdi(modell2)
+pi_m2 = posterior_interval(modell2, prob=0.95)
+both2 = cbind(hdi_m2, pi_m2)
+colnames(both2) = c('HDI:lwr', 'HDI:upr', 'PI:2.5%', 'PI:97.5%')
+kable(both2, digits=2)
+```
+
+Bzw. können wir mithilfe von `plothist()` (einem erweiterten Histogramm aus *daatools*) die genau Verteilung und das HDI anzeigen. Standardmäßig wird ein 95%-Intervall genommen und der Median der Verteilung (kann mit Parametern geändert werden):
+
+```{r fig.height=5}
+par(mfrow=c(2,2), mar=c(2,4,4,4))
+plothist(modell2, '(Intercept)')
+plothist(modell2, 'Height170')
+plothist(modell2, 'Age30')
+plothist(modell2, 'GenderMale')
+```
+
+Alternativ können wir mit `plotcoef()` einen raschen Überblick über die Werte der Koeffizienten sowie deren 95%-HDI erhalten:
+
+```{r}
+plotcoef(modell2, "beta") # nur Koeffizienten ohne Intercept und Sigma
+```
+
+## Regressionsgerade
+
+Wir können die entstandene Regressionsgerade beispielsweise im Scatterplott anzeigen:
+
+```{r}
+cf = coef(modell2)
+# Basiswert für eine 29-jährige Frau (~mittleres Alter von Frauen im Datensatz)
+female = cf['(Intercept)'] + cf['Age30']*(28-30)
+# Basiswert eines 32-jährigen Mannes (~mittleres Alter von Männer im Datensatz)
+male = cf['(Intercept)'] + cf['Age30']*(32-30) + cf['GenderMale']
+# Frauen=rot, Männer=türkis
+ggplot(body, aes(Height170, Weight, color=Gender, group=Gender)) + 
+  geom_point(alpha=0.3) +
+  theme_minimal() +
+  geom_abline(aes(intercept=female, slope=cf['Height170'], color='Female')) +
+  geom_abline(aes(intercept=male, slope=cf['Height170'], color='Male'))
+```
+
+Bzw. wenn X-Achse das Alter ist:
+
+```{r echo=FALSE}
+# Basiswert für eine 165cm große Frau (~mittlere Frauengröße im Datensatz)
+female = cf['(Intercept)'] + cf['Height170']*(165-170)
+# Basiswert einen 178cm großen Mann (~mittlere Männergröße im Datensatz)
+male = female + cf['GenderMale'] + cf['Height170']*(178-170)
+ggplot(body, aes(Age30, Weight, color=Gender, group=Gender)) + 
+  geom_point(alpha=0.3) +
+  theme_minimal() +
+  geom_abline(aes(intercept=female, slope=cf['Age30'], color='Female')) +
+  geom_abline(aes(intercept=male, slope=cf['Age30'], color='Male'))
+```
+Bei beiden Darstellungen ist klar zu sehen, dass Gruppen die Linien nur parallel verschieben, also nicht die Steigung ändern.
+
+Lassen Sie sich aber nicht von der Darstellung täuschen: für die Linien haben wir ja nur die Mittelwerte der Koeffizienten genommen (die Punktwerte), nicht eine volle Verteilung. Wenn man bspw. jeweils 25 Samples auswählt, ergeben sich folgende 25 leicht unterschiedliche Regressionsgeraden je Gruppe:
+
+```{r echo=FALSE}
+set.seed(1234)
+cfm = as.matrix(modell2)
+cfm = cfm[sample.int(4000, 50), ]
+
+lines = purrr::map_dfr(1:50, function(i) {
+  if (i <= 25) { # Frauen: erste 25, Männer: zweite 25 Samples
+    intercept = cfm[i, '(Intercept)'] + cfm[i, 'Age30']*(28-30)
+    color='Female'
+  } else {
+    intercept = cf['(Intercept)'] + cf['Age30']*(32-30) + cf['GenderMale']
+    color='Male'
+  }
+  data.frame(intercept=intercept, slope=cfm[i, "Age30"], color=color)
+})
+
+ggplot(body, aes(Height170, Weight, color=Gender, group=Gender)) + 
+  geom_point(alpha=0.3) +
+  theme_minimal() +
+  geom_abline(data=lines, aes(intercept=intercept, slope=slope,
+                              color=color), alpha=0.2)
+```
+
+## Priors
+
+Wie sieht es mit den Priors aus? Um ein Ergebnis (Posterior) zu erhalten, müssen ja nicht nur Daten und deren Likelihood vorhanden bzw. berechnet werden, sondern auch ein Vorwissen (Prior) einfließen. Bisher haben wir aber keines angegeben... `stan_glm()` hat Default-Priors verwendet, welche unsinnige Werte ausschließen:
+
+```{r}
+prior_summary(modell2)
+```
+
+Die Priors sind in der Reihenfolge der Regressionsformel bzw. der Koeffizienten angegeben und zwar  als *specified* and *adjusted* angegeben. In beiden Fällen handelt es sich um Normalverteilungen.
+
+Beim *specified prior* werden z-transformierte Werte verwendet. `Coefficients, Specified prior: ~ normal(location = [0,0,0], scale = [2.5,2.5,2.5])` bedeutet also, dass für alle drei Koeffizienten (`Height170`, `Age30`, `GenderMale`) eine Normalverteilung mit Mittelwert 0 (*location*) und Standardabweichung 2.5 (*scale*) verwendet wird. Typischerweise können Koeffizienten (wenn alle Variablen z-skaliert sind) nur zwischen -1 und 1 liegen[^4]. Mit dem angegebenen Prior lassen wir Werte zwischen -5..+5 (~95%-Intervall) für die Koeffizienten zu. D.h. das Vorwissen hat so gut wie keinen Einfluss auf die Koeffizienten, sondern schließt nur unsinnige Werte (bei instabilem Verhalten des Modells) aus.
+
+[^4]: wenn zwei Variable sehr stark korrelieren sind auch Koeffizienten größer 1 möglich. Das ist aber die Ausnahme.
+
+Die *adjusted priors* skalieren die specified priors zurück auf die Originalskala der jeweiligen Variable. Die Berechnung sieht für alle Variablen[^5] so aus: $\sigma = \sigma_z \frac {sd(y)} {sd(x)}$. Beispiel: beim Gender lässt der Standardprior demnach einen Koeffizienten zwischen -133..+133 kg zu, beim Alter ca. -7..+7 kg je Jahr, bei der Größe ebenfalls ca. -7..+7kg je Zentimer.
+
+[^5]: Dies gilt auch für nominale Variablen: In diesem Fall dividiert `rstanarm` durch die Standardabweichung der dummy-codierten Variable(n).
+
+Im Rahmen der Lehrveranstaltung spezifizieren wir typischerweise keine eigenen Priors, sondern verwenden immer die schwach informativen Standard-Priors.

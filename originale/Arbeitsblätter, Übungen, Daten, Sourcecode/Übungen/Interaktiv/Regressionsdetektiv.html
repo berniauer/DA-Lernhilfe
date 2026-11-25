@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Regression Detective</title>
+<style>
+:root{
+  --bg:#101217;--panel:#181c24;--panel2:#202630;--line:#39414d;--text:#edf0f4;--muted:#aeb6c2;
+  --paper:#eee6d6;--ink:#26231f;--accent:#d2a85b;--good:#6fcf97;--bad:#eb7777;--info:#7eb2e8;
+}
+*{box-sizing:border-box} body{margin:0;background:radial-gradient(circle at 20% 0,#202632 0,#101217 42%);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.45}
+button,input{font:inherit} button{cursor:pointer}
+.wrap{max-width:1180px;margin:auto;padding:24px 18px 56px}
+.topbar{display:flex;gap:18px;align-items:flex-start;justify-content:space-between;margin-bottom:20px}
+.case-title small{display:block;color:var(--accent);font-weight:800;letter-spacing:.16em;font-size:.78rem}.case-title h1{margin:.22rem 0 1rem;font-size:clamp(2rem,4.5vw,4.3rem);line-height:.96}.case-title p{margin:0;color:var(--muted);max-width:740px}
+.badge{border:1px solid #725f38;background:#2b251a;color:#f3d496;border-radius:999px;padding:8px 13px;font-weight:750;white-space:nowrap}
+.layout{display:grid;grid-template-columns:1.15fr .85fr;gap:18px}.board,.side{min-width:0}.panel{background:rgba(24,28,36,.95);border:1px solid #343b47;border-radius:16px;padding:18px;margin-bottom:16px}
+.panel h2,.panel h3{margin-top:0}.briefing{display:grid;grid-template-columns:1.1fr .9fr;gap:16px;align-items:stretch}.paper{background:var(--paper);color:var(--ink);padding:22px;border-radius:3px;box-shadow:0 12px 30px #0006;transform:rotate(-.35deg);position:relative}.paper:before{content:"INTERNER ANALYSEBERICHT";display:block;font:800 .7rem ui-monospace,monospace;letter-spacing:.14em;color:#766d60;margin-bottom:16px}.paper blockquote{margin:0;font-family:Georgia,serif;font-size:1.32rem;line-height:1.5}.paper .sig{margin-top:18px;color:#6d665b;font-size:.9rem}.briefmeta{display:flex;flex-direction:column;gap:10px}.meta{border:1px solid var(--line);border-radius:12px;padding:12px}.meta b{display:block;color:#fff}.meta span{color:var(--muted);font-size:.9rem}
+.evidence-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.evidence{position:relative;text-align:left;border:1px solid #3b4450;background:linear-gradient(145deg,#202631,#171b23);color:var(--text);border-radius:12px;padding:16px;min-height:135px;transition:.15s transform,.15s border-color}.evidence:hover{transform:translateY(-2px);border-color:#6c7887}.evidence .num{font:800 .7rem ui-monospace,monospace;color:var(--accent);letter-spacing:.1em}.evidence h3{margin:.35rem 0 .3rem;font-size:1rem}.evidence p{margin:0;color:var(--muted);font-size:.88rem}.evidence.solved{border-color:#49745d}.evidence.solved:after{content:"GEKLÄRT";position:absolute;right:10px;top:10px;color:var(--good);font-weight:900;font-size:.66rem;letter-spacing:.08em;transform:rotate(6deg);border:2px solid currentColor;padding:2px 5px}
+.casefile{display:none}.casefile.show{display:block}.casehead{display:flex;gap:12px;align-items:flex-start;justify-content:space-between}.casehead .kicker{color:var(--accent);font:800 .75rem ui-monospace,monospace;letter-spacing:.14em}.close{background:transparent;color:var(--muted);border:1px solid #49515c;border-radius:8px;padding:7px 10px}.model{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0f131a;border:1px solid #313947;padding:14px;border-radius:9px;overflow:auto;color:#eaf2ff}.clue{background:#141922;border-left:4px solid var(--info);padding:12px 14px;margin:14px 0;border-radius:0 8px 8px 0}.question{margin-top:18px;border-top:1px solid #343b47;padding-top:16px}.question h3{font-size:1rem}.answers{display:grid;gap:8px}.answer{background:#1d2430;border:1px solid #414b59;color:var(--text);border-radius:9px;text-align:left;padding:11px 12px}.answer:hover{border-color:#728096}.answer.correct{border-color:var(--good);background:#183026}.answer.wrong{border-color:var(--bad);background:#351f22}.feedback{display:none;margin-top:12px;padding:10px 12px;border-radius:8px}.feedback.show{display:block}.feedback.good{background:#173126;color:#bcebd0}.feedback.bad{background:#372024;color:#ffd0d0}
+.statgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px}.stat{border:1px solid #394352;background:#141922;padding:10px;border-radius:9px}.stat small{color:var(--muted);display:block}.stat strong{font-size:1.3rem}.viz{background:#111721;border:1px solid #344156;border-radius:12px;padding:8px;margin-top:12px}.viz svg{width:100%;height:auto;display:block}
+.notebook{position:sticky;top:14px}.progressline{height:8px;background:#2a3039;border-radius:99px;overflow:hidden;margin-bottom:12px}.progressbar{height:100%;width:0;background:var(--accent);transition:.25s width}.facts{display:grid;gap:8px}.fact{padding:9px 10px;border-radius:8px;background:#131820;color:#8994a3;border:1px dashed #39414c;font-size:.89rem}.fact.on{color:#e8edf4;border-style:solid;border-color:#4a6554;background:#18231d}.verdict{display:none}.verdict.show{display:block; margin-top: 1em}.verdict .choices{display:grid;gap:9px}.verdict button{padding:12px;border-radius:9px;border:1px solid #46515f;background:#202733;color:#fff;text-align:left}.verdict button.correct{border-color:var(--good);background:#183126}.verdict button.wrong{border-color:var(--bad);background:#351f23}.reconstruct{display:none;margin-top:16px}.reconstruct.show{display:block}.clause{display:flex;gap:8px;align-items:flex-start;background:#151a21;border:1px solid #36404d;padding:10px;border-radius:8px;margin:8px 0}.clause input{margin-top:4px;accent-color:var(--accent)}.finalreport{display:none;background:var(--paper);color:var(--ink);padding:20px;border-radius:3px;margin-top:16px}.finalreport.show{display:block}.finalreport h3{font-family:Georgia,serif;font-size:1.45rem}.stamp{display:inline-block;color:#8c3c31;border:4px solid #8c3c31;padding:5px 10px;font-weight:900;letter-spacing:.08em;transform:rotate(-4deg);margin-bottom:12px}
+.small{color:var(--muted);font-size:.9rem}.actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:12px}.primary,.secondary{border-radius:9px;padding:10px 13px;font-weight:750}.primary{border:1px solid #9d7d41;background:#6d5428;color:#fff}.secondary{border:1px solid #46515f;background:#202733;color:#fff}
+@media(max-width:860px){.layout,.briefing{grid-template-columns:1fr}.notebook{position:static}.evidence-grid{grid-template-columns:1fr}.topbar{display:block}.badge{display:inline-block;margin-top:12px}}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <div class="topbar">
+    <div class="case-title"><small>STATISTICAL CRIMES UNIT · FALL 24-170</small><h1>Regression Detective</h1><p>Unsere Presseabteilung drängt uns, sofort folgenden Analysebericht aus unserer Forschungsabteilung an die Medien weiterzuleiten. Findet das deine Zustimmung?</p></div>
+    <div class="badge" id="scoreBadge">0 / 6 Beweise</div>
+  </div>
+
+  <div class="layout">
+    <main class="board">
+      <section class="panel briefing">
+        <div class="paper">
+          <blockquote>„Unsere Analyse zeigt: Männer wiegen im Durchschnitt <b>7,65 kg mehr</b> als Frauen. Das Modell erklärt die Körpergewichte zuverlässig und kann daher für <b>Erwachsene allgemein</b> eingesetzt werden und sagt als Durchschnittsgewicht <b>64,6 kg</b> vorher; die Österreicher*innen nehmen also ab. Für DJ Alpenbeat werden <b>82 kg</b> vorhergesagt; die Pressesprecherin des Stars gab dazu kein Kommentar ab.“</blockquote>
+          <div class="sig">— Bericht der Analytics-Abteilung</div>
+        </div>
+        <div class="briefmeta">
+          <div class="meta"><b>Datensatz</b><span>College-Studierende aus den USA</span></div>
+          <div class="meta"><b>Zielvariable</b><span>Weight [kg]</span></div>
+          <div class="meta"><b>Prädiktoren</b><span>Height, Age, Gender</span></div>
+          <div class="meta"><b>Auftrag</b><span>Bericht fachlich freigeben oder stoppen</span></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Beweiswand</h2>
+        <p class="small">Du kannst die Beweise in beliebiger Reihenfolge untersuchen. Jeder geklärte Punkt landet im Notizbuch.</p>
+        <div class="evidence-grid" id="evidenceGrid"></div>
+      </section>
+
+      <section class="panel casefile" id="casefile"></section>
+    </main>
+
+    <aside class="side">
+      <section class="panel notebook">
+        <h2>Ermittlungsnotizen</h2>
+        <div class="progressline"><div class="progressbar" id="progressbar"></div></div>
+        <div class="facts" id="facts"></div>
+        <div class="verdict" id="verdict">
+          <h3>Wer ist der Hauptverdächtige?</h3>
+          <p class="small">Alle sechs Beweise sind ausgewertet.</p>
+          <div class="choices">
+            <button data-verdict="calc"><b>Die Berechnung</b><br><span class="small">MCMC hat nicht funktioniert.</span></button>
+            <button data-verdict="model"><b>Das Regressionsmodell</b><br><span class="small">Lineare Regression ist hier grundsätzlich unbrauchbar.</span></button>
+            <button data-verdict="report"><b>Die Interpretation im Bericht</b><br><span class="small">Das Modell ist brauchbar, aber seine Aussagen werden überzogen.</span></button>
+            <button data-verdict="data"><b>Der gesamte Datensatz</b><br><span class="small">Mit diesen Daten darf überhaupt nichts ausgesagt werden.</span></button>
+          </div>
+          <div class="feedback" id="verdictFeedback"></div>
+          <div class="reconstruct" id="reconstruct">
+            <h3>Rekonstruiere die zulässige Aussage</h3>
+            <p class="small">Markiere alle Formulierungen, die in den Abschlussbericht gehören.</p>
+            <label class="clause"><input type="checkbox" data-clause="1"><span>Der Intercept 64,6 kg beschreibt den Basisfall: eine 170 cm große, 30 Jahre alte Frau.</span></label>
+            <label class="clause"><input type="checkbox" data-clause="1"><span>Bei gleicher Größe und gleichem Alter liegt das vom Modell erwartete Gewicht für Männer im Mittel 7,65 kg höher als für Frauen.</span></label>
+            <label class="clause"><input type="checkbox" data-clause="0"><span>Ein beliebiger Mann wiegt deshalb 7,65 kg mehr als eine beliebige Frau.</span></label>
+            <label class="clause"><input type="checkbox" data-clause="1"><span>Für einzelne Personen ist die Vorhersage deutlich unsicherer als der erwartete Mittelwert; dafür ist auch die Residuenstreuung relevant.</span></label>
+            <label class="clause"><input type="checkbox" data-clause="1"><span>Die Ergebnisse gelten zunächst für einen Datensatz aus US-College-Studierenden; eine Übertragung auf alle Erwachsenen ist nicht automatisch gerechtfertigt.</span></label>
+            <label class="clause"><input type="checkbox" data-clause="0"><span>Weil Train- und Testfehler ähnlich sind, ist Repräsentativität für die Gesamtbevölkerung bewiesen.</span></label>
+            <div class="actions"><button class="primary" id="checkReport">Abschlussbericht prüfen</button></div>
+            <div class="feedback" id="reportFeedback"></div>
+          </div>
+          <div class="finalreport" id="finalreport">
+            <div class="stamp">BERICHT GESTOPPT</div>
+            <h3>Ermittlungsergebnis</h3>
+            <p><b>Das Modell ist nicht der Täter.</b> Sampling, Reproduktion der Daten und Generalisierung auf Testdaten liefern keinen offensichtlichen technischen Alarm.</p>
+            <p>Der Bericht begeht dagegen mehrere Interpretationsfehler: Er verwechselt den Intercept mit einem allgemeinen Durchschnitt, lässt beim Gruppenkoeffizienten „ansonsten gleich“ weg, macht aus einer erwarteten Modellvorhersage eine sichere Einzelvorhersage und überträgt eine Stichprobe von US-College-Studierenden auf alle Erwachsenen.</p>
+            <p><b>Zulässige Kurzfassung:</b> Im vorliegenden Datensatz sagt das Modell für ansonsten gleiche Personen ein im Mittel um 7,65 kg höheres Gewicht für Männer als für Frauen voraus. Der Basisfall ist eine 170 cm große, 30 Jahre alte Frau mit einem erwarteten Gewicht von 64,6 kg. Einzelvorhersagen streuen deutlich; die externe Übertragbarkeit auf andere Populationen ist nicht durch den Datensatz belegt. Zur derzeit hitzigen Debatte rund um DJ Alpenbeat kann unser Modell keine konkrete Aussage liefern.</p>
+            <div class="actions"><button class="secondary" id="restart">Fall neu starten</button></div>
+          </div>
+        </div>
+      </section>
+    </aside>
+  </div>
+</div>
+<script>
+(()=>{
+const evidence=[
+ {id:'intercept',title:'Akte A · Der Basisfall',desc:'Was bedeutet 64,6 kg wirklich?',fact:'64,6 kg ist der Intercept des zentrierten Modells — nicht das Gewicht einer „durchschnittlichen Person“.',render:()=>`
+   <div class="casehead"><div><div class="kicker">BEWEIS A // INTERCEPT</div><h2>Wer genau ist 64,6 kg?</h2></div><button class="close">Schließen</button></div>
+   <div class="model">Weight = 64.6 + 0.88 · Height + 0.06 · Age + 7.65 · GenderMale</div>
+   <div class="clue"><b>Codierung:</b> Height = Größe − 170cm; Age = Alter − 30 Jahre; Referenzgruppe bei Gender = Female.</div>
+   <div class="question"><h3>Welche Person beschreibt der Intercept?</h3><div class="answers">
+    <button class="answer" data-ok="0">Die durchschnittliche Person im Datensatz.</button>
+    <button class="answer" data-ok="0">Eine durchschnittliche Frau im Datensatz.</button>
+    <button class="answer" data-ok="0">Eine 0 cm große, 0 Jahre alte Frau.</button>
+    <button class="answer" data-ok="1">Eine 170 cm große, 30 Jahre alte Frau.</button>
+   </div><div class="feedback"></div></div>`},
+ {id:'group',title:'Akte B · Die 7,65 kg',desc:'Was sagt der Gruppenkoeffizient?',fact:'GenderMale = +7,65 kg ist eine Differenz zur Referenzgruppe bei ansonsten gleichen Modellvariablen.',render:()=>`
+   <div class="casehead"><div><div class="kicker">BEWEIS B // GRUPPENVERGLEICH</div><h2>„Männer wiegen 7,65 kg mehr“?</h2></div><button class="close">Schließen</button></div>
+   <div class="model">GenderMale = +7.65 kg &nbsp; (Referenz: Female)</div>
+   <p>Der Bericht hat daraus eine sehr kurze Schlagzeile gemacht.</p>
+   <div class="question"><h3>Welche Interpretation ist durch den Koeffizienten gedeckt?</h3><div class="answers">
+    <button class="answer" data-ok="0">Jeder Mann wiegt 7,65 kg mehr als jede Frau.</button>
+    <button class="answer" data-ok="0">Der durchschnittliche Mann wiegt um 7,65 kg mehr als die durchschnittliche Frau.</button>
+    <button class="answer" data-ok="1">Bei gleicher Größe und gleichem Alter ist das erwartete Gewicht für Männer im Modell im Mittel 7,65 kg höher.</button>
+    <button class="answer" data-ok="0">7,65 % des männlichen Gewichts werden durch das Geschlecht erklärt.</button>
+   </div><div class="feedback"></div></div>`},
+ {id:'prediction',title:'Akte C · Die Einzelperson',desc:'Erwartungswert oder echte Vorhersage?',fact:'posterior_epred() beschreibt die Unsicherheit des erwarteten Mittelwerts; posterior_predict() enthält zusätzlich die Residuenstreuung für Einzelfälle.',render:()=>`
+   <div class="casehead"><div><div class="kicker">BEWEIS C // VORHERSAGE</div><h2>Eine konkrete Person betritt den Raum</h2></div><button class="close">Schließen</button></div>
+   <p>Für eine bestimmte Person liefert das Modell einen erwarteten Wert von <b>82 kg</b>. Der Bericht schreibt: „Die Person wiegt laut Modell 82 kg.“</p>
+   <div class="statgrid"><div class="stat"><small>posterior_epred()</small><strong>79–85 kg</strong></div><div class="stat"><small>posterior_predict()</small><strong>64–100 kg</strong></div></div>
+   <div class="question"><h3>Welches Intervall ist für das tatsächliche Gewicht einer neuen Einzelperson relevanter?</h3><div class="answers">
+    <button class="answer" data-ok="0">79–85 kg, weil nur die Koeffizienten zählen.</button>
+    <button class="answer" data-ok="1">64–100 kg, weil bei einer Einzelvorhersage zusätzlich die Residuenstreuung berücksichtigt werden muss.</button>
+    <button class="answer" data-ok="0">Keines: lineare Regression kann keine Einzelpersonen vorhersagen.</button>
+   </div><div class="feedback"></div></div>`},
+ {id:'sampling',title:'Akte D · Die Berechnung',desc:'Ist MCMC überhaupt vertrauenswürdig?',fact:'Die Sampling-Diagnostik zeigt hier keinen offensichtlichen Rechenfehler: Rhat nahe 1, ausreichend n_eff, unauffällige Traceplots.',render:()=>`
+   <div class="casehead"><div><div class="kicker">BEWEIS D // SAMPLING</div><h2>Hat Stan sauber gerechnet?</h2></div><button class="close">Schließen</button></div>
+   <div class="statgrid"><div class="stat"><small>max. Rhat</small><strong>1,01</strong></div><div class="stat"><small>min. n_eff / 4000</small><strong>2 380</strong></div><div class="stat"><small>Chains</small><strong>4</strong></div><div class="stat"><small>Warnungen</small><strong>0</strong></div></div>
+   <div class="viz">${traceSvg()}</div>
+   <div class="question"><h3>Dein Urteil?</h3><div class="answers">
+    <button class="answer" data-ok="1">Kein offensichtlicher Sampling-Alarm; die Pfade liegen im selben Bereich und wirken wie Rauschen.</button>
+    <button class="answer" data-ok="0">Rhat muss exakt 0 sein, daher ist das Modell unbrauchbar.</button>
+    <button class="answer" data-ok="0">n_eff muss größer als die Anzahl der Samples sein.</button>
+   </div><div class="feedback"></div></div>`},
+ {id:'ppc',title:'Akte E · Tatort-Rekonstruktion',desc:'Kann das Modell ähnliche Daten erzeugen?',fact:'Der PPC reproduziert die grobe Verteilung plausibel; das ist ein notwendiger, aber kein allumfassender Modellcheck.',render:()=>`
+   <div class="casehead"><div><div class="kicker">BEWEIS E // PPC</div><h2>Kann das Modell den Tatort rekonstruieren?</h2></div><button class="close">Schließen</button></div>
+   <p>Weiße Linie: beobachtete Gewichtsverteilung. Blaue Linien: simulierte Datensätze aus der posterior predictive distribution.</p>
+   <div class="viz">${ppcSvg()}</div>
+   <div class="question"><h3>Was folgt daraus?</h3><div class="answers">
+    <button class="answer" data-ok="0">Das Modell ist bewiesen richtig.</button>
+    <button class="answer" data-ok="1">Das Modell kann wichtige globale Eigenschaften der beobachteten Daten plausibel reproduzieren.</button>
+    <button class="answer" data-ok="0">Ein guter PPC beweist, dass die Stichprobe repräsentativ ist.</button>
+   </div><div class="feedback"></div></div>`},
+ {id:'generalization',title:'Akte F · Der falsche Reisepass',desc:'Für wen gilt das Ergebnis?',fact:'Ähnliche Train-/Testfehler sprechen für Generalisierung innerhalb ähnlicher Daten — nicht automatisch für Repräsentativität einer anderen Population.',render:()=>`
+   <div class="casehead"><div><div class="kicker">BEWEIS F // TRAIN / TEST & POPULATION</div><h2>Wie weit darf das Modell reisen?</h2></div><button class="close">Schließen</button></div>
+   <div class="statgrid"><div class="stat"><small>Train MAE</small><strong>6,8 kg</strong></div><div class="stat"><small>Test MAE</small><strong>7,1 kg</strong></div></div>
+   <div class="question"><h3>Welche Schlussfolgerung ist korrekt?</h3><div class="answers">
+    <button class="answer" data-ok="0">Ähnliche Testfehler beweisen, dass das Modell geeignet ist Gewicht vorhersagen (auch für Nova Alpenbeat).</button>
+    <button class="answer" data-ok="1">Das Modell generalisiert auf zurückgehaltene, ähnliche Daten ordentlich; damit ist aber keine Repräsentativität für alle Erwachsenen gezeigt.</button>
+    <button class="answer" data-ok="0">Weil der Datensatz nicht alle Erwachsenen enthält, ist auch der Train/Test-Vergleich wertlos.</button>
+    <button class="answer" data-ok="0">Weil der Datensatz aus den USA stammt, ist auch der Train/Test-Vergleich wertlos.</button>
+   </div><div class="feedback"></div></div>`}
+];
+
+const state={solved:new Set(),attempts:0};
+const grid=document.getElementById('evidenceGrid'),casefile=document.getElementById('casefile'),facts=document.getElementById('facts');
+
+function renderGrid(){
+ grid.innerHTML=evidence.map((e,i)=>`<button class="evidence ${state.solved.has(e.id)?'solved':''}" data-id="${e.id}"><div class="num">EVIDENCE ${String(i+1).padStart(2,'0')}</div><h3>${e.title}</h3><p>${e.desc}</p></button>`).join('');
+ grid.querySelectorAll('.evidence').forEach(b=>b.addEventListener('click',()=>openEvidence(b.dataset.id)));
+ renderNotebook();
+}
+function renderNotebook(){
+ const n=state.solved.size;document.getElementById('scoreBadge').textContent=`${n} / ${evidence.length} Beweise`;document.getElementById('progressbar').style.width=`${n/evidence.length*100}%`;
+ facts.innerHTML=evidence.map(e=>`<div class="fact ${state.solved.has(e.id)?'on':''}">${state.solved.has(e.id)?'✓ '+e.fact:'□ Beweis noch nicht ausgewertet'}</div>`).join('');
+ if(n===evidence.length)document.getElementById('verdict').classList.add('show');
+}
+function openEvidence(id){
+ const e=evidence.find(x=>x.id===id);casefile.innerHTML=e.render();casefile.classList.add('show');casefile.scrollIntoView({behavior:'smooth',block:'start'});
+ casefile.querySelector('.close').addEventListener('click',()=>casefile.classList.remove('show'));
+ const fb=casefile.querySelector('.feedback');
+ casefile.querySelectorAll('.answer').forEach(btn=>btn.addEventListener('click',()=>{
+   if(btn.disabled)return;
+   if(btn.dataset.ok==='1'){
+     casefile.querySelectorAll('.answer').forEach(x=>x.disabled=true);btn.classList.add('correct');fb.className='feedback good show';fb.innerHTML='<b>Beweis gesichert.</b> Diese Aussage passt zu Modell und Datengrundlage.';
+     state.solved.add(id);renderGrid();
+   }else{
+     btn.classList.add('wrong');btn.disabled=true;state.attempts++;fb.className='feedback bad show';fb.innerHTML='<b>Noch nicht.</b> Prüfe genau, was der jeweilige Kennwert bzw. Koeffizient tatsächlich beschreibt.';
+   }
+ }));
+}
+
+document.querySelectorAll('[data-verdict]').forEach(btn=>btn.addEventListener('click',()=>{
+ const fb=document.getElementById('verdictFeedback');
+ if(btn.dataset.verdict==='report'){
+   document.querySelectorAll('[data-verdict]').forEach(x=>x.disabled=true);btn.classList.add('correct');fb.className='feedback good show';fb.innerHTML='<b>Hauptverdächtiger identifiziert:</b> Nicht die Berechnung, sondern die Interpretation überschreitet die Beweislage.';document.getElementById('reconstruct').classList.add('show');
+ }else{btn.classList.add('wrong');btn.disabled=true;fb.className='feedback bad show';fb.innerHTML='<b>Das passt nicht zu den gesicherten Beweisen.</b> Sampling, PPC und Testdaten zeigen keinen Grund für diese Totaldiagnose.';}
+}));
+
+document.getElementById('checkReport').addEventListener('click',()=>{
+ const boxes=[...document.querySelectorAll('[data-clause]')];
+ const ok=boxes.every(b=>b.checked===(b.dataset.clause==='1'));const fb=document.getElementById('reportFeedback');
+ if(ok){fb.className='feedback good show';fb.innerHTML='<b>Bericht rekonstruiert.</b> Die Aussage trennt jetzt Basisfall, Gruppenvergleich, Einzelvorhersage und Population sauber.';document.getElementById('finalreport').classList.add('show');document.getElementById('checkReport').disabled=true;}
+ else{fb.className='feedback bad show';fb.innerHTML='<b>Noch enthält der Bericht eine unzulässige Aussage oder lässt eine notwendige Einschränkung aus.</b>'}
+});
+
+document.getElementById('restart').addEventListener('click',()=>{state.solved.clear();state.attempts=0;document.getElementById('verdict').classList.remove('show');document.getElementById('reconstruct').classList.remove('show');document.getElementById('finalreport').classList.remove('show');document.getElementById('verdictFeedback').className='feedback';document.getElementById('reportFeedback').className='feedback';document.querySelectorAll('[data-verdict]').forEach(x=>{x.disabled=false;x.classList.remove('correct','wrong')});document.querySelectorAll('[data-clause]').forEach(x=>x.checked=false);document.getElementById('checkReport').disabled=false;casefile.classList.remove('show');renderGrid();window.scrollTo({top:0,behavior:'smooth'})});
+
+function traceSvg(){
+ const colors=['#7eb2e8','#79c8a1','#e89191','#b59be0'];let paths='';
+ for(let c=0;c<4;c++){let s=(4567+c*991)>>>0;const rnd=()=>{s=(1664525*s+1013904223)>>>0;return s/4294967296};let y=46+(rnd()-.5)*8,d='';for(let i=0;i<900;i++){const x=25+i*0.59;const m=44+c*.7;y=m+.68*(y-m)+(rnd()-.5)*10;d+=(i?'L':'M')+x.toFixed(2)+','+y.toFixed(2)}paths+=`<path d="${d}" fill="none" stroke="${colors[c]}" stroke-width=".8" opacity=".82"/>`}
+ return `<svg viewBox="0 0 590 95" role="img" aria-label="Dichte MCMC Traceplots"><line x1="25" y1="76" x2="560" y2="76" stroke="#526071"/><line x1="25" y1="12" x2="25" y2="76" stroke="#526071"/>${paths}<text x="28" y="90" fill="#8f9aaa" font-size="10">Iteration →</text></svg>`
+}
+function ppcSvg(){
+ const curve=(shift,scale,w)=>{let d='';for(let i=0;i<=120;i++){const x=28+i*4.45;const z=(i-60-shift)/scale;const y=125-91*Math.exp(-.5*z*z)*(1+w*Math.sin(i*.19));d+=(i?'L':'M')+x.toFixed(1)+','+y.toFixed(1)}return d};let sims='';[-4,-2,1,3,5,0].forEach((s,j)=>sims+=`<path d="${curve(s,21+j*.45,.025)}" fill="none" stroke="#7eb2e8" stroke-width="1.4" opacity=".32"/>`);return `<svg viewBox="0 0 600 150" role="img" aria-label="PPC mit ähnlichen simulierten und beobachteten Verteilungen"><line x1="28" y1="127" x2="565" y2="127" stroke="#526071"/>${sims}<path d="${curve(0,21,.045)}" fill="none" stroke="#f0f3f7" stroke-width="3"/><text x="235" y="145" fill="#8f9aaa" font-size="10">Weight →</text></svg>`
+}
+renderGrid();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,206 @@
+<!-- Quelle: Arbeitsblätter, Übungen, Daten, Sourcecode/Arbeitsblätter (Skriptum)/Sourcecode/03-Simpsons-Paradox.Rmd (R Markdown, Code-Chunks = ```{r}) -->
+
+---
+title: "Simpsons Paradox"
+author: "Arno Hollosi"
+lang: "de"
+papersize: A4
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    includes:
+      in_header: my-styles.tex
+---
+
+```{r echo=FALSE, include=FALSE}
+library(knitr)
+library(dplyr)
+library(rstanarm)
+library(ggplot2)
+library(daatools)
+knitr::opts_chunk$set(echo = TRUE, fig.width=7, fig.height=4)
+
+df <- read.csv('daten/operationen.csv', stringsAsFactors = TRUE)
+```
+
+# Beispiel: Operationen in einem Krankenhaus
+
+Versetzen wir uns in die Lage einer Krankenhausleitung, in deren Krankenhaus zwei OP-Teams tätig sind, Team A und Team B. Für die jährlichen Bonuszahlungen soll jenes Team belohnt werden, bei dessen Operationen es am wenigsten Komplikationen gegeben hat. Eine erste Übersicht ist schnell erstellt (Sie finden den Datensatz in der Datei *"daten/operationen.csv"*):
+
+```{r echo=FALSE, results='asis'}
+tt <- table(df$Team, df$Resultat) %>%
+  addmargins() %>%
+  addmargins(2, FUN=function(x) x[2]/x[3]*100)
+dimnames(tt)[[2]][4] <- "Komplikationen in %"
+kable(round(tt,1), caption = "Erfolge bzw. Komplikationen bei 1000 Operationen")
+```
+
+Es ist eindeutig, dass **Team B** das "bessere" Team ist. Die Krankenhausleitung will schon die Bonuszahlungen entsprechend verteilen, da kommt man auf die Idee, dass vielleicht die Schwierigkeit der Operation -- Routineeingriff oder komplizierter Fall -- eine Rolle spielen könnte. Entsprechende Daten stehen zur Verfügung. Eine neue Auswertung ergibt folgendes Bild:
+
+```{r echo=FALSE, results='asis'}
+tt.leicht <- filter(df, Schwierigkeit=="leicht") %>%
+  select(Team, Resultat) %>%
+  table() %>%
+  addmargins() %>%
+  addmargins(2, FUN=function(x) x[2]/x[3]*100)
+dimnames(tt.leicht)[[2]][4] <- "Komplikationen in %"
+kable(round(tt.leicht,1), caption = "Leichte Operationen")
+
+tt.schwer <- filter(df, Schwierigkeit=="schwer") %>%
+  select(Team, Resultat) %>%
+  table() %>%
+  addmargins() %>%
+  addmargins(2, FUN=function(x) x[2]/x[3]*100)
+dimnames(tt.schwer)[[2]][4] <- "Komplikationen in %"
+kable(round(tt.schwer,1), caption = "Schwere Operationen")
+```
+
+In beiden(!) Fällen -- leichten und schweren Operationen -- hat sich das Ergebnis nun umgekehrt und **Team A** ist das Team mit weniger Komplikationen. Wie kann die Summe von zwei Teilergebnissen die Statistik umdrehen?
+
+Dieses Phänomen wird *Simpsons Paradox* genannt. Es taucht auf, wenn eine Summen-Statistik auf einzelne Gruppen aufgebrochen wird und die Gruppen unterschiedliche Gewichtung haben. Ein bekanntes Beispiel ist die Frauen-/Männer-Quote bei der Studien-Zulassung an der UC Berkeley[^1].
+
+[^1]: https://en.wikipedia.org/wiki/Simpson%27s_paradox#Examples
+
+In obigem Beispiel erklärt sich das Paradox so, dass Team A sowohl mehr schwere Operationen als auch weniger leichte Operationen durchführt als Team B. Die Gesamtquote vermischt daher (a) wie gut ein Team arbeitet und (b) welche Fälle das Team behandelt.
+
+Wenn Sie in der Krankenhausleitung tätig wären, wem würden Sie die Bonuszahlungen zuteilen? Was wäre, wenn die Daten für die Schwierigkeit einer Operation nicht verfügbar wären? Was wäre, wenn es noch andere "versteckte" Variablen gäbe, die in obiger Aufteilung nicht berücksichtig worden sind (z.B. Alter bzw. Vorgeschichte der Patienten)?
+
+# Regressionsbeispiel: Wohnungspreise
+
+Ähnliche Effekte können auch bei linearen Regressionen eine Rolle spielen. In beiden Fällen entsteht der scheinbare Widerspruch dadurch, dass wir nach Berücksichtigung einer weiteren Variable andere Beobachtungen miteinander vergleichen. Wir wollen uns das am Beispiel für Wohnungspreise ansehen. Wir haben einen Datensatz mit Wohnungspreisen, Wohnfläche und Anzahl der Zimmer. Der Zusammenhang ist eindeutig: je mehr Zimmer, desto höher der Preis und auch je mehr Wohnfläche, desto höher der Preis.
+
+```{r echo=FALSE}
+wohnungen = read.csv('daten/wohnungspreise.csv')
+# Datenset erzeugt mit:
+# n=5000
+# set.seed(1234)
+# wohnungen = tibble(
+#   wohnflaeche = 100 + 25*rnorm(n),
+#   zimmer = wohnflaeche/20 + rnorm(n, 0, 1),
+#   preis = rnorm(n, 100000, 40000) + 3500*wohnflaeche - 10000*zimmer) |>
+#   mutate(
+#     zimmer = as.integer(zimmer + 0.5),
+#     wohnflaeche = round(wohnflaeche*2)/2 # nur 0.5m² Schritte
+#     preis = round(preis/100)*100 # nur 100€ Schritte
+#   ) |>
+#   filter(wohnflaeche > 35, zimmer>=1, zimmer<=6)
+
+p1 = ggplot(wohnungen, aes(factor(zimmer), preis)) + geom_boxplot() +
+  theme_minimal() + labs(x="Zimmer", y="Preis (EUR)")
+p2 = ggplot(wohnungen, aes(wohnflaeche, preis)) + geom_point(alpha=0.1) + 
+  theme_minimal() + labs(x="Wohnfläche (m²)", y="Preis (EUR)")
+patchwork::wrap_plots(p1, p2)
+```
+
+Die Regression liefert ein deutliches Ergebnis (wir verwenden `zimmer4` als unabhängige Variable: sie ist $Zimmer - 4$; null bedeutet also vier Zimmer):
+
+```{r include=FALSE}
+wohnungen = wohnungen |> mutate(
+  zimmer4 = zimmer - 4,
+  wohnflaeche90 = wohnflaeche - 90)
+```
+```{r results='hide', cache=TRUE}
+fit_zi = stan_glm(preis ~ zimmer4, data=wohnungen, seed=1234)
+```
+```{r echo=FALSE}
+coef(fit_zi)
+```
+
+Interpretation: Je Zimmer Unterschied kostet eine Wohnung um über 30 000 EUR mehr. Basisfall: eine Wohnung mit 4 Zimmern kostet ca. 370 000 EUR (`zimmer4=0`).
+
+Auch die Wohnfläche ist ein guter Indikator für den Preis. Die Regression liefert folgendes Ergebnis (wir verwenden `wohnflaeche90` als unabhängige Variable: null bedeutet 90m² Fläche):
+
+```{r results='hide', cache=TRUE}
+fit_fl <- stan_glm(preis ~ wohnflaeche90, data=wohnungen, seed=4567)
+```
+```{r echo=FALSE}
+coef(fit_fl)
+```
+
+Interpretation: Je m² Unterschied kostet eine Wohnung um 3100 EUR mehr. Eine Wohnung mit 90m² kostet ca. 372 000 EUR (Basisfall, `wohnflaeche90=0`).
+
+Bevor wir nun groß in die Immobilienbranche einsteigen, sollten wir uns überlegen, ob wir nicht eine Regression rechnen, in der wir beide Variable aufnehmen, da ja beide Effekte zum Preis beitragen. Gesagt getan:
+
+```{r results='hide', cache=TRUE}
+fit_beide = stan_glm(preis ~ wohnflaeche90 + zimmer4, data=wohnungen, seed=7890)
+```
+```{r echo=FALSE}
+coef(fit_beide)
+```
+
+Der Koeffizient für die Zimmer hat das Vorzeichen geändert! Während vorher mehr Zimmer einen höheren Preis vorhergesagt hat (positives Vorzeichen), sagen nun weniger Zimmer einen höheren Preis vorher (negatives Vorzeichen). Wie ist das möglich?
+
+\newpage
+
+Sehen wir uns die Korrelations-Matrix an:
+
+```{r echo=FALSE}
+kable(cor(wohnungen |> select(preis, wohnflaeche, zimmer)), digits=2)
+```
+
+Wohnfläche korreliert recht stark mit Preis (0.85), Anzahl der Zimmer geringfügig weniger (0.49), zudem korrelieren aber Zimmer und Wohnfläche recht stark miteinander (0.66). D.h. da diese beiden Variablen korrelieren, beeinflussen sich auch die Regressionskoeffizienten gegenseitig. Der folgende Scatterplot zeigt den Zusammenhang nochmal bunt. Achten Sie darauf, wie höhere Zimmeranzahl (gelb) tendenziell eher rechts (bei höherer Wohnfläche) liegt und niedrigere Zimmer (rot) eher links bei kleinerer Wohnfläche zu finden sind.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+ggplot(wohnungen, aes(x=wohnflaeche, y=preis, col=zimmer)) + 
+  geom_point(alpha=0.4) + 
+  scale_color_gradientn(colours = heat.colors(6)) +
+  geom_smooth(method = "lm", se = FALSE, color="#666") +
+  labs(x="Wohnfläche", y="Preis (EUR)") +
+  theme_minimal()
+```
+
+Wie also die Regressionskoeffizienten interpretieren?
+
+```{r echo=FALSE}
+coef(fit_beide)
+```
+
+Der Koeffizient für `zimmer4` bedeutet nun etwas anderes als vorher. Er beschreibt nicht mehr den Preisunterschied zwischen Wohnungen mit unterschiedlicher Zimmerzahl *allgemein*, sondern zwischen Wohnungen *mit gleicher Wohnfläche*, die sich in ihrer Zimmerzahl unterscheiden. Dieser geänderte Vergleich erklärt den Vorzeichenwechsel.
+
+Also nur die separaten Regressionen verwenden? Oder noch zusätzliche Variable einführen? Weder, noch. Die Modelle `fit_zi` und `fit_beide` beantworten unterschiedliche Fragestellungen!
+
+* Bei `fit_zi` lautet die Fragestellung: Wie hängt der Preis einer Wohnung von *Anzahl der Zimmer* ab?
+* Bei `fit_beide` ist die Fragestellung aber: Welchen Einfluss hat die Anzahl der Zimmer auf den Preis *einer vergleichbaren Wohnung* (wenn also die Wohnfläche gleich bleibt)?
+
+Ein möglicher Grund für den negativen Zimmerpreis ist, dass dadurch die Wohnung mehr zerstückelt wird und damit keine großen Räume aufweist. D.h. beide der folgenden Aussagen sind gleichzeitig gültig:
+
+* Insgesamt sind Wohnungen mit mehr Zimmern teurer.
+* Bei gleicher Wohnfläche können zusätzliche Zimmer aber mit einem niedrigeren Preis verbunden sein.
+
+Der Zusammenhang ist auch bereits in den Daten ersichtlich: wenn wir uns nur einen kleinen Ausschnitt der Daten anssehen, dann können wir den negativen Einfluss der Zimmergröße sehen:
+
+```{r, echo=FALSE}
+wohnungen |>
+  filter(between(wohnflaeche, 95, 105)) |>
+  ggplot(aes(factor(zimmer), preis)) +
+    geom_boxplot() +
+    labs(x = "Zimmer", y = "Preis (EUR)", title = "Nur Wohnungen zwischen 95 und 105 m²") +
+    theme_minimal()
+```
+
+# Zusammenfassung
+
+Die Beispiele sollen verdeutlichen, dass die praktische Interpretation der Koeffizienten bei multipler linearer Regression (d.h. zwei oder mehr unabhängige Variablen) nicht ohne Kontext erfolgen kann. Nur dann können Regressions-Modelle sinnvoll beurteilt werden. Letztlich sind Regressions-Modelle eben genau das: vereinfachte Modelle der Wirklichkeit. Welche Frage wir beantworten wollen, beeinflusst welches Modell wir verwenden sollten.
+
+Wenn sich ein Koeffizient stark verändert oder sogar sein Vorzeichen wechselt, ist das daher zunächst kein Fehler des Modells. Es zeigt, dass der bedingte Vergleich ("bei gleichen Werten der anderen Modellvariablen") etwas anderes beschreibt als der unbedingte Vergleich. Wir müssen uns also fragen, wann "X gleich halten" inhaltlich sinnvoll ist. Mehr Variablen im Modell bedeuten also nicht automatisch "besseres Modell", sondern "anderes Modell".
+
+Bevor wir Regressionskoeffizienten interpretieren, bspw. bei einem Modell
+$y \sim x1 + x2 + x3 + \ldots$, sollten wir uns fragen:
+
+1. Was wird miteinander verglichen?
+2. Was wird dabei konstant gehalten?
+3. Ist es realistisch und inhaltlich sinnvoll, diese Variablen konstant zu halten?
+4. Gibt es wichtige Gruppen oder Einflussgrößen, die das Modell nicht berücksichtigt?
+5. Beschreiben die Koeffizienten nur eine Assoziation oder dürfen wir sie kausal interpretieren?
+
+------------
+
+### Quellen und weiterführende Unterlagen
+
+Yu-Kang Tu, David Gunnell, and Mark S Gilthorpe (2008): *Simpson's Paradox, Lord's Paradox, and Suppression Effects are the same phenomenon – the reversal paradox*. Emerging Themes in Epidemiology, 2008 5:2. DOI:10.1186/1742-7622-5-2
+
+Westfall J, Yarkoni T (2016): *Statistically Controlling for Confounding Constructs Is Harder than You Think.* PLoS ONE 11(3): e0152719. DOI:10.1371/journal.pone.0152719
+
+McElreath R (2020): *Statistical Rethinking*. CRC Press, 2nd Edition.
+https://xcelab.net/rm/statistical-rethinking/

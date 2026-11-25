@@ -1,0 +1,262 @@
+<!-- Quelle: Arbeitsblätter, Übungen, Daten, Sourcecode/Arbeitsblätter (Skriptum)/Sourcecode/05-Interaktionen.Rmd (R Markdown, Code-Chunks = ```{r}) -->
+
+---
+title: "Interaktionen"
+author: "Arno Hollosi"
+lang: "de"
+papersize: A4
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    includes:
+      in_header: my-styles.tex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, message=FALSE, warning=FALSE,
+                      fig.width=7, fig.height=4, 
+                      R.options=list(digits=2))
+library(ggplot2)
+library(dplyr)
+library(rstanarm)
+library(daatools)
+```
+
+# Motivation: Eine Zahl reicht nicht immer
+
+Eine Schulungsfirma möchte wissen, ob zusätzliche Lernstunden mit besseren Testergebnissen einhergehen. Sie hat Daten aus zwei Kursformaten, **Selbststudium** und **Betreuung**:
+
+```{r echo=FALSE}
+set.seed(42)
+n = 90
+lernen = data.frame(
+  stunden = rep(runif(n, 1, 10), 2),
+  format = factor(rep(c("Selbststudium", "Betreuung"), each=n),
+                  levels=c("Selbststudium", "Betreuung"))) |>
+  mutate(punkte = 35 + 2 * stunden + (format == "Betreuung") * (3 + 3 * stunden) + rnorm(2*n, sd=5)
+)
+
+ggplot(lernen, aes(stunden, punkte, color=format)) +
+  geom_point(alpha=.5) +
+  labs(x="Lernstunden", y="Testpunkte", color="Kursformat") +
+  theme_minimal()
+```
+
+Überlegen Sie kurz: Was würden Sie einer Person raten, die 2 Stunden lernt? Was einer Person, die 9 Stunden lernt? Was wäre problematisch an der Aussage: "Betreuung bringt im Mittel X Punkte"?
+
+## Erstes Modell: Gruppenvariable
+
+Stellen wir also eine erstes Modell auf, um ein wenig Licht in das "Datendunkel" zu bringen:
+
+```{r}
+modell1 = stan_glm(punkte ~ stunden + format, data=lernen, seed=1234, refresh=0)
+coef(modell1)
+```
+
+Kurze Interpretation: Basisfall (26 Punkte) ist Selbststudium mit 0 Stunden lernen. Je Lernstunde Unterschied mehr ist das Testergebnis um 3.6 Punkte höher. Betreuung erzielt bei gleicher Stundenanzahl im Schnitt knapp 20 Punkte besseres Testergebnis. Werden die Regressionslininen für beider Gruppen eingezeichnet, dann sieht das so aus:
+
+```{r echo=FALSE}
+ggplot(lernen, aes(stunden, punkte, color=format)) +
+  geom_point(alpha=.25) +
+  geom_line(aes(y=predict(modell1)), linewidth=1) +
+  labs(x="Lernstunden", y="Testpunkte", color="Kursformat") +
+  theme_minimal()
+```
+
+## Interaktion: Unterschiedliche Steigung je Gruppe
+
+Wenn wir uns den Scatterplot genau ansehen, erkennen wir, dass die Regressionsgeraden den Datensatz nicht optimal treffen. Vor allem bei wenigen Stunden ist ersichtlich, dass bspw. das Selbststudium deutlich abweicht. Man könnte jetzt einen Residual-Plot machen (siehe Arbeitsblatt "Testen des Modells"), der uns zeigt, dass hier tatsächlich ein systematischer Fehler vorliegt:
+
+```{r fig.height=2.5, echo=FALSE}
+diagnose_residual(modell1, samples=FALSE)
+```
+Ob der Zusammenhang wirklich nicht-linear ist oder ein anderer Grund für die Abweichung vorliegt, kann man aus dem Plot nicht ablesen. Wir entscheiden uns dazu, unterschiedliche Steigungen für die Regressionsgeraden in jeder Gruppe zu verwenden. Das geht mit einer **Interaktion**:
+
+```{r}
+modell2 = stan_glm(punkte ~ stunden + format + stunden:format,
+                   data=lernen, seed=1234, refresh=0)
+coef(modell2)
+```
+
+Wir haben nun zusätzlich zu den Koeffizienten für Stunden und Format einen weiteren Koeffizienten (`stunden:formatBetreuung`). Der Koeffizient für das Format (`formatBetreuung`) gibt weiterhin den Unterschied zwischen Betreuung und Selbststudium an, allerdings nur beim Basisfall, also bei null Lernstunden. Bei 0 Lernstunden erzielt die Betreuung etwa 4 Punkte mehr. Bei anderen Lernstunden verändert sich dieser Unterschied aufgrund der Interaktion. Wie stark er sich verändert, beschreibt der Interaktionskoeffizient. Wegen der Interaktion gilt der Koeffizient für Stunden nur noch für die Referenzgruppe ("Selbststudium"). D.h. bei Selbststudium gibt es, je Lernstunde Differenz, um über 2 Testpunkte mehr.
+
+Der Koeffizient des Interaktionsterms `stunden:formatBetreuung` gibt an, wie sehr sich die Differenz je Stunde für die Gruppe Betreuung ändert *im Vergleich zur Referenzgruppe*. D.h. im Vergleich zum Selbststudium hat die Gruppe Betreuung ein um ca. 2.7 Punkte pro Stunde stärkeren Zusammenhang. Da die Referenzgruppe Selbststudium selbst aber 2.2 Punkte Differenz je Stunde Lernen hat, heißt das, dass (in absoluten Werten) die Betreuungsgruppe eine Steigung von ca. 5 Punkten je Lernstunde hat (2.2+2.7 Punkte). 
+
+Ähnlich also wie bei Gruppenvariablen die Koeffizienten die Differenz zur Referenzgruppe angeben, gibt der Interaktionsterm ebenfalls die Differenz zur Referenzgruppe an, allerdings für die Steigung (`stunden`) nicht für den Intercept. Bei einer Interaktion hängt also der Zusammenhang zwischen einer erklärenden Variable und dem Ergebnis vom Wert einer anderen Variable ab. Ein einzelner Koeffizient beschreibt dann nur einen *bedingten Zusammenhang*.
+
+Im Scatterplot sehen die Regressionsgeraden nun wie folgt aus:
+
+```{r echo=FALSE}
+ggplot(lernen, aes(stunden, punkte, color=format)) +
+  geom_point(alpha=.25) +
+  geom_line(aes(y=predict(modell1)), linetype=2) +
+  geom_line(aes(y=predict(modell2)), linewidth=1) +
+  labs(subtitle="modell2: unterschiedliche Steigungen; zum Vergleich modell1 gestrichelt",
+       x="Lernstunden", y="Testpunkte") +
+  theme_minimal()
+```
+
+Der Test mit `diagnose_residual()` zeigt nun auch eine deutlich bessere (unauffällige) Verteilung der Residuen.
+
+```{r fig.height=2.5, echo=FALSE}
+diagnose_residual(modell2, samples=FALSE)
+```
+
+## Was passiert bei anderem Basisfall?
+
+Derzeit ist der Basisfall "0 Lernstunden, Selbststudium". Wie ändern sich die Koeffizienten, wenn wir die Basisgruppe ändern? Fangen wir mit den Lernstunden an und nehmen 5 Stunden lernen als Referenz:
+
+```{r}
+lernen$stunden5 = lernen$stunden - 5
+# 'stunden5 * format' ist die Kurzschreibweise für 'stunden5 + format + stunden5:format'
+modell3 = stan_glm(punkte ~ stunden5 * format, data=lernen, seed=1234, refresh=0)
+```
+```{r echo=FALSE}
+rbind(ursprung=coef(modell2),
+      zentriert=coef(modell3))
+```
+
+Warum hat sich der Gruppenunterschied `formatBetreuung` nun so stark verändert?
+
+Der Intercept hat sich verändert weil nun der Basisfall die Gruppe Selbststudium mit *5 Lernstunden* ist, nicht mehr mit 0 Stunden. Deshalb ist jetzt auch der Intercept höher, nämlich um $5 \times 2.2$ (Koeffizient für Stunden). Der Gruppenkoeffizient für die Betreuung (`formatBetreuung`) hat sich aus demselben Grund geändert. Er gibt weiterhin den Unterschied zur Gruppe des Selbststudiums an, aber nun den Unterschied *bei 5 Lernstunden* (und nicht mehr den Unterschied bei 0 Lernstunden). Und zu diesem Zeitpunkt ist bereits fünfmal die höhere Steigung der Gruppebetreuung eingegangen. So ergibt sich der neue Wert von 17.7 ($3.9 + 5 \times 2.75$).
+
+Was wir daraus lernen, ist, dass wir aus der Aussage "der Gruppenkoeffizient ist klein" nicht den Schluss ziehen dürfen "Betreuung wirkt nicht". Je nach Referenzpunkt können wir den Koeffizienten für den Gruppenunterschied beliebig groß oder klein, ja sogar null oder negativ machen. Der Zusammenhang im Datensatz jedoch bleibt immer der gleiche!
+
+Welcher Referenzpunkt ist also der richtige? Sind es null Lernstunden wie im Modell 1, obwohl null Stunden im Datensatz nicht vorkommen? Oder sind es 5 Lernstunden, was in etwa dem Mittelwert entspricht? Oder ist es etwas ganz anderes? 
+
+Die provokante Antwort ist, dass alle Referenzpunkte richtig sind! Es ändern sich ja weder die Daten, noch die Regressionsgeraden selbst. Wir beschreiben die Regressionsgeraden nur durch unterschiedliche Referenzpunkte. Wir können jeden Referenzpunkt wählen. Aber nicht jeder Referenzpunkt ist inhaltlich sinnvoll: Liegt er weit außerhalb unserer Beobachtungen, interpretieren wir einen Unterschied, den das Modell nur extrapoliert und der in Realität nicht vorkam.
+
+Bei einer Interaktion ist also die Frage "Wie groß ist der Gruppenunterschied?" _ohne_ Angabe des Referenzwerts unvollständig. Die isolierte Interpretation des Koeffizienten alleine gibt uns keine Auskunft über die Unterschiede zwischen den Gruppen. Das Beispiel zeigt, warum man Haupteffekte (`stunden`, `formatBetreuung`) bei Interaktionen nicht isoliert interpretieren sollte.
+
+## Was passiert bei anderer Referenzgruppe?
+
+Ändern wir nun auch die Referenzgruppe:
+
+```{r}
+lernen$format2 = relevel(lernen$format, ref="Betreuung")
+modell4 = stan_glm(punkte ~ stunden5 * format2, data=lernen, seed=1234, refresh=0)
+coef(modell4)
+```
+
+Was bedeuten die Koeffizienten nun?
+
+Der Basisfall ist nun die Gruppe Betreuung bei 5 Lernstunden und erzielt laut Intercept 62 Testpunkte. Der Koefficient für Stunden stellt nun die Steigung für die Gruppe Betreuung dar, da diese nun unsere Referenzgruppe ist. Die 5 Testpunkte je Lernstunde Differenz sind genau jene Steigung, die wir vorher bereits für die Gruppe berechnet hatten (siehe Modelle weiter oben).
+
+Warum haben sich die Vorzeichen für `format2Selbststudium` und `stunden5:format2Selbststudium` umgedreht? 
+
+Da der Unterschied zwischen beiden Gruppen identisch geblieben ist, hat sich der absolute Wert nicht verändert. Da aber die Referenz nun die andere Gruppe ist, ergibt sich die Differenz nicht mehr aus $Betreuung - Selbststudium$ sondern aus $Selbststudium - Betreuung$ und damit dreht sich das Vorzeichen um. 
+
+## Welches Modell ist besser?
+
+Wir können die vier Fragen der Modelltests auf das normale und auf das Interaktionsmodell anwenden, um zu sehen, ob die Modelle den Datensatz gut beschreiben, systematische Fehler vorliegen, etc. Wir können auch mithilfe eines Train-Test-Splits Prüfen, ob die Modelle gut auf neue Daten verallgemeinern. Bzw. wie im Arbeitsblatt Modellvergleich ausgeführt, mithilfe von $R^2$, `loo` oder anderen Metriken prüfen, welches Modell geeigneter für unseren Anwendungsfall ist. Interaktionsmodelle sind nur sinnvoll, wenn sie uns helfen, die vorliegenden Daten bzw. unseren Anwendungsfall besser zu modellieren.
+
+# Fallstrick: Kaum gemeinsame Datenbereiche
+
+Betrachten wir nun einen verwandten Datensatz: In einem Kursformat lernen die meisten wenig, im anderen viel:
+
+```{r echo=FALSE}
+set.seed(73)
+schief = data.frame(
+  stunden=c(runif(70, 1, 4), runif(70, 7, 10)),
+  format=factor(rep(c("Selbststudium", "Betreuung"), each=70),
+                levels=c("Selbststudium", "Betreuung"))) |>
+  mutate(punkte = 35 + 3*stunden + 4*(format == "Betreuung") + rnorm(140, sd=5))
+
+ggplot(schief, aes(stunden, punkte, color=format)) +
+  geom_point() +
+  geom_smooth(method="lm", se=FALSE, fullrange=TRUE) +
+  labs(subtitle="Getrennte Datenbereiche", x="Lernstunden", y="Testpunkte") +
+  theme_minimal()
+```
+
+Achtung: Hier sind die Regressionsgeraden _weit_ über die jeweiligen Datenpunkte hinaus verlängert. Inwiefern die Aussagen der Regressionsgeraden also gültig sind, also z.B. die der Betreuung bei bspw. zwei Lernstunden oder die des Selbststudiums bei acht Lernstunden ist nicht klar. Dementsprechend können wir zwar die Koeffizienten eines zugehörigen Modells interpretieren, es stellt sich allerdings die Frage, inwiefern die Steigung dieser Lerngeraden sinnvoll miteinander vergleichbar sind.
+
+Wir sollten also immer im Auge erhalten, wo die realen Beobachtungen für beide Gruppen liegen. Ein Modell kann nämlich auch dort Vorhersagen liefern, wo es keine oder nur sehr wenige Daten gibt. 
+
+
+# Interaktion zweier metrischer Variablen
+
+Bisher war die zweite Variable eine Gruppe. Wie sieht eine Interaktion zweier metrischer Variablen aus? Hier hängt die Steigung einer Variable vom Wert der anderen Variable ab, und umgekehrt. Eine Interpretation der "nackten" Koeffizienten führt hier besonders leicht in die Irre. R hat einen mitgelieferten Datensatz, welcher die Ozonbelastung in der Luft misst, u.a. abhängig von Wind und Temperatur. Die Überlegung ist folgende: Je höher die Temperatur umso höher der Ozonwert, aber je stärker der Wind umso niedriger der Ozonwert, weil der Wind die Schadstoffe verdünnt bzw. abtransportiert. Wir gehen davon aus, dass eine Interaktion vorliegt.
+
+```{r}
+# Der Datensatz airquality ist im R-Package 'datasets' enthalten
+# Wind in mph (Meilen pro Stunde), Temperatur in °Fahrenheit, Ozon in ppb (part per billion)
+# Wir zentrieren den Datensatz wieder
+air = airquality |>
+  filter(!is.na(Ozone)) |>
+  mutate(temp80 = Temp - 80,
+         wind10 = Wind - 10)
+m_ozon = stan_glm(Ozone ~ temp80 * wind10, data=air, seed=1234, refresh=0)
+coef(m_ozon)
+```
+
+Wie bereits einleitend angedeutet ist nun Vorsicht angebracht. Wir können nicht einfach sagen, die Ozonwerte ändern sich (generell) um 1.8 ppb pro °F Unterschied oder um -3.6 ppb pro mph Windstärke Unterschied. Denn die Steigung beider ändert sich abhängig von `temp80:wind10`! Die Werte gelten nur für den Basisfall. Hier ist der Basisfall (nach zentrieren, d.h. X-Variable sind 0) bei 10 mph Windstärke und 80 °F. Das heißt, die 1.8 ppb pro °F Unterschied gelten nur bei 10 mph Windstärke. Analog gelten die -3.6 ppb Unterschied pro mph Windstärke nur bei 80 °F.
+
+Bei z.B. 15 mph ändert sich der Ozonwert um ~0.7 ppb/°F -- errechnet sich aus der Steigung des Basisfalls (1.8 ppb/°F) plus 5x Steigungsänderung je mph (5mph Differenz zu Basisfall von 10mph), also 5x -0.21. Analog, beim Wind. Bei z.B. 90°F ändert sich der Ozonwert um ca. -5.8 ppb/mph.
+
+Anmerkung: Auch hier hat die Wahl des Basisfalls Einfluss auf die Größe der Koeffizienten. Probieren Sie unterschiedliche Referenzpunkte aus und überlegen Sie sich, warum und wie sich die Koeffizienten geändert haben.
+
+Am sinnvollsten ist es nun, die Interaktion visuell darzustellen. Bspw. Ozon in Abhängigkeit von Temperatur bei einigen Windstärken:
+
+```{r echo=FALSE}
+grid <- expand.grid(
+  temp80=seq(55-80, 100-80, length.out=100),
+  wind10=c(-5, 0, 5)
+)
+grid$ozon <- predict(m_ozon, newdata=grid)
+
+ggplot(grid, aes(temp80+80, ozon, color=factor(wind10+10))) +
+  geom_line(linewidth=1) +
+  labs(x="Temperatur (°F)", y="Ozon (ppb)",
+       color="Wind (mph)") +
+  theme_minimal()
+```
+
+## Eine Fläche statt vieler Linien
+
+Statt viele Linien in unterschiedliche Diagramme zu malen, können wir die Interaktion auch als Fläche darstellen und so die Auswirkung der Interaktion visualisieren (die Punkte zeigen die tatsächlich gemessenen Werte im Datensatz):
+
+```{r echo=FALSE}
+flaeche <- expand.grid(
+  temp80=seq(55-80, 100-80, length.out=80),
+  wind10=seq(-10, 11, length.out=80)
+)
+flaeche$ozon <- predict(m_ozon, newdata=flaeche)
+
+ggplot(flaeche, aes(temp80+80, wind10+10, z=ozon)) +
+  geom_raster(aes(fill=ozon)) +
+  geom_contour(color="white", linewidth=.35) +
+  geom_point(data=air, aes(Temp, Wind), inherit.aes=FALSE, alpha=.35, size=.6) +
+  scale_fill_viridis_c(name="Vorhersage") +
+  labs(x="Temperatur (°F)", y="Wind (mph)") +
+  theme_minimal()
+```
+
+Fragen: Wo nimmt Ozon mit steigender Temperatur stark zu? Wo eher schwach? Wie erkennt man das am Abstand und der Richtung der Konturlinien? Was lässt sich aus dem Plot nicht ablesen? In welchen Bereichen des Diagramms sind die Vorhersagen gut durch Beobachtungen gestützt? Wo verlassen wir uns stärker auf Modellannahmen?
+
+# Wann Interaktion verwenden?
+
+Interaktions-Modelle sind nicht immer automatisch richtig. Der einfachste Fall ist, wenn sich aus dem Fachwissen heraus eine Interaktion aufdrängt, sei es z.B. im Gesundheitsbereich eine Interaktion mit Rauchen oder im physikalischen Bereich wie im Ozonbeispiel zwischen Temperatur und Wind. In jedem Fall sollten wir die Modellgüte überprüfen, mithilfe der Tests wie im Arbeitsblatt Modelltests diskutiert. Zudem sollten wir prüfen, ob die beobachteten Unterschiede tatsächlich eine Interaktion erfordern oder auch durch eine bisher nicht berücksichtigte Nichtlinearität erklärt werden können. Vielleicht brauchen wir auch beides. Modelltests sind also immer notwendig, um die Qualität eines Modells einzuschätzen. Sich dabei bloß auf die erklärte Varianz eines Modells zu verlassen ($R^2$) greift zu kurz.
+
+Berechnungen prüfen, Daten visualisieren, Modellergebnisse visualisieren, etc. sind deshalb immer essentielle Schritte der Modellierung eines Zusammenhangs bzw. einer Forschungsfrage. 
+
+Betrachten Sie bspw. folgende Aussagen und entscheiden Sie jeweils: sinnvoll, nur bedingt, oder nicht gedeckt.
+
+* Ein Medikament könnte bei älteren und jüngeren Personen unterschiedlich wirken.
+* Ein Interaktionskoeffizient von −2 bedeutet, dass die Zielgröße überall um 2 sinkt.
+* Auch ohne signifikanten Gruppen-Haupteffekt kann sich die Gruppensteigung unterscheiden.
+* Ein besseres $R^2$ beweist die Interaktion.
+* Wir sollten vorab überlegen, welche Moderatoren fachlich plausibel sind.
+* Aus einem Interaktionsmodell kann ich automatisch kausale Empfehlungen ableiten.
+* Für Vorhersagen sind konkrete Fallkonstellationen oft verständlicher als Koeffizienten.
+
+## Prüfungen vor jeder Interpretation
+
+Bevor wir Koeffizienten interpretieren und so dem Modell "Aussagen entlocken", sollten wir folgende Tests durchführen. Einerseits sind es generische Modell-Tests, andererseits sind hier einige spezielle Überlegungen erwähnt, die wir uns für Interaktionsmodelle überlegen sollten:
+
+* **Sampling:** Hat MC-Stan das Sampling gut hinbekommen? (effektive Sample-Anzahl, Sampling-Ketten im selben Wertebereich, ...)
+* **Posterior-/Predictive Check bzw. Modellcheck:** Sind Vorhersagen und Residuen plausibel? Übersehen wir Krümmung, Ausreißer oder ungleiche Streuung?
+* **Systematischer Fehler:** Welche Drittvariablen könnten den beobachteten Unterschied erklären? Sind wir dabei, einen Zusammenhang kausal zu deuten?
+* **Daten**:  Woher stammen die Daten? Haben alle Gruppen vergleichbare Wertebereiche? Gibt es genügend Beobachtungen in den interessierenden Kombinationen?
+* **Modellvergleich bzw. Train/Test:** Verbessert die Interaktion Vorhersagen auf neuen Daten oder nur die Anpassung an die vorhandenen?

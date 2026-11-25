@@ -1,0 +1,199 @@
+<title>DA Klausurtrainer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: eine schmale Lernspalte; oben Kapitelwahl, darunter Karte/Frage, unten Fortschritt */
+:root {
+  --bg: #eef2f4; --surface: #ffffff; --ink: #14232b; --muted: #5b6b73; --line: #d3dde2;
+  --accent: #1d6b75; --accent-soft: #d8ecee; --ok: #2f7d43; --ok-soft: #dff1e3; --bad: #b0412e; --bad-soft: #f8e1dc;
+  --f-head: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f171b; --surface: #17232a; --ink: #e3ecef; --muted: #93a6ae; --line: #2a3a42;
+  --accent: #5fb7c1; --accent-soft: #1d3a40; --ok: #6cc584; --ok-soft: #1c3424; --bad: #ec8a76; --bad-soft: #3e231d; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f171b; --surface: #17232a; --ink: #e3ecef; --muted: #93a6ae; --line: #2a3a42;
+  --accent: #5fb7c1; --accent-soft: #1d3a40; --ok: #6cc584; --ok-soft: #1c3424; --bad: #ec8a76; --bad-soft: #3e231d; color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 16px/1.55 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 20px 40px }
+.wrap { max-width: 680px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px }
+header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap }
+h1 { font: 700 1.5rem/1.2 var(--f-head); margin: 0; letter-spacing: -0.01em }
+h1 small { font: 500 .78rem var(--f-mono); color: var(--muted); letter-spacing: .04em; display: block; margin-top: 4px }
+.stat { font: 500 .8rem var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums }
+label.lbl { font: 600 .72rem var(--f-body); text-transform: uppercase; letter-spacing: .08em; color: var(--muted) }
+select, button { font: inherit; color: inherit }
+select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface) }
+.controls { display: grid; gap: 10px }
+.modes { display: flex; gap: 6px; flex-wrap: wrap }
+.modes button { flex: 1 1 auto; padding: 9px 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; cursor: pointer; font-weight: 500; font-size: .92rem }
+.modes button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface) }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px; display: flex; flex-direction: column; gap: 14px; min-height: 260px }
+.meta { display: flex; justify-content: space-between; gap: 8px; font: 500 .75rem var(--f-mono); color: var(--muted) }
+.q { font: 600 1.12rem/1.45 var(--f-body); margin: 0; text-wrap: pretty }
+.term { font: 700 1.55rem/1.25 var(--f-head); margin: 0; text-wrap: balance }
+.answer { border-top: 1px dashed var(--line); padding-top: 14px; font-size: 1.02rem }
+.opts { display: grid; gap: 8px }
+.opt { text-align: left; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); cursor: pointer; display: flex; gap: 10px; align-items: flex-start; line-height: 1.4 }
+.opt b { font-family: var(--f-mono); color: var(--accent); min-width: 1.2em }
+.opt:hover:not(:disabled) { border-color: var(--accent) }
+.opt:disabled { cursor: default }
+.opt.right { background: var(--ok-soft); border-color: var(--ok) }
+.opt.wrong { background: var(--bad-soft); border-color: var(--bad) }
+.expl { padding: 12px 14px; border-radius: 10px; background: var(--accent-soft); font-size: .96rem }
+.expl strong { font-family: var(--f-head) }
+.row { display: flex; gap: 8px; flex-wrap: wrap }
+.btn { flex: 1 1 140px; padding: 12px 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-weight: 600 }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--surface) }
+.btn.ok { border-color: var(--ok); color: var(--ok) }
+.btn.bad { border-color: var(--bad); color: var(--bad) }
+button:focus-visible, select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px }
+.bar { height: 6px; background: var(--line); border-radius: 99px; overflow: hidden }
+.bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .3s }
+.done { text-align: center; align-items: center; justify-content: center }
+.done .big { font: 700 2.6rem var(--f-head); font-variant-numeric: tabular-nums }
+footer { font-size: .82rem; color: var(--muted); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap }
+footer button { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; text-decoration: underline }
+@media (prefers-reduced-motion: reduce) { .bar i { transition: none } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>DA Klausurtrainer<small>Bayes · stan_glm · logit · LOO · daatools</small></h1>
+    <span class="stat" id="overall"></span>
+  </header>
+
+  <div class="controls">
+    <label class="lbl" for="deck">Thema</label>
+    <select id="deck"></select>
+    <div class="modes" role="group" aria-label="Modus">
+      <button id="m-mc" aria-pressed="true">Multiple Choice</button>
+      <button id="m-card" aria-pressed="false">Karteikarten</button>
+      <button id="m-wrong" aria-pressed="false">Fehler wiederholen</button>
+    </div>
+  </div>
+
+  <div class="bar" aria-hidden="true"><i id="prog"></i></div>
+  <section class="card" id="card" aria-live="polite"></section>
+
+  <footer>
+    <span>Fortschritt wird nur in diesem Browser gespeichert.</span>
+    <button id="reset">Fortschritt zurücksetzen</button>
+  </footer>
+</div>
+
+<script>
+const DATA = /*__QUIZDATA__*/[];
+const KEY = "da-quiz-v1";
+let store = {};
+try { store = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { store = {}; }
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {} };
+
+const $ = id => document.getElementById(id);
+const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// Alle Items mit stabiler ID
+const ITEMS = [];
+DATA.forEach(d => {
+  d.fragen.forEach((f, i) => ITEMS.push({ type: "mc", deck: d.id, deckTitel: d.titel, id: `${d.id}:q${i}`, ...f }));
+  d.karten.forEach((k, i) => ITEMS.push({ type: "card", deck: d.id, deckTitel: d.titel, id: `${d.id}:k${i}`, term: k[0], def: k[1] }));
+});
+
+const sel = $("deck");
+sel.innerHTML = `<option value="all">Alle Themen gemischt</option>` +
+  DATA.map(d => `<option value="${d.id}">${d.id.slice(0, 2)} · ${esc(d.titel)}</option>`).join("");
+let mode = "mc", queue = [], pos = 0, score = 0, answered = 0;
+try { const last = JSON.parse(localStorage.getItem(KEY + "-ui") || "{}"); if (last.deck) sel.value = last.deck; if (last.mode) mode = last.mode; } catch (e) {}
+
+function stats(id) { return store[id] || { r: 0, w: 0 }; }
+function mark(id, ok) { const s = stats(id); ok ? s.r++ : s.w++; s.last = ok ? 1 : 0; store[id] = s; save(); }
+
+function overall() {
+  const mcs = ITEMS.filter(i => i.type === "mc");
+  const seen = mcs.filter(i => store[i.id]).length;
+  const good = mcs.filter(i => store[i.id] && store[i.id].last === 1).length;
+  $("overall").textContent = `${good}/${mcs.length} Fragen zuletzt richtig · ${seen} gesehen`;
+}
+
+function build() {
+  const deck = sel.value;
+  let pool = ITEMS.filter(i => deck === "all" || i.deck === deck);
+  if (mode === "mc") pool = pool.filter(i => i.type === "mc");
+  else if (mode === "card") pool = pool.filter(i => i.type === "card");
+  else pool = pool.filter(i => store[i.id] && store[i.id].last === 0);
+  queue = shuffle(pool); pos = 0; score = 0; answered = 0;
+  ["mc", "card", "wrong"].forEach(m => $("m-" + m).setAttribute("aria-pressed", String(m === mode)));
+  try { localStorage.setItem(KEY + "-ui", JSON.stringify({ deck, mode })); } catch (e) {}
+  render();
+}
+
+function progress() { $("prog").style.width = queue.length ? (100 * pos / queue.length) + "%" : "0"; }
+
+function render() {
+  progress(); overall();
+  const c = $("card");
+  if (!queue.length) {
+    c.className = "card done";
+    c.innerHTML = mode === "wrong"
+      ? `<p class="q">Keine offenen Fehler in diesem Thema.</p><p>Beantworte erst Fragen im Modus „Multiple Choice“. Falsch beantwortete landen hier.</p>`
+      : `<p class="q">Für dieses Thema gibt es hier keine Einträge.</p>`;
+    return;
+  }
+  if (pos >= queue.length) {
+    c.className = "card done";
+    const pct = answered ? Math.round(100 * score / answered) : 0;
+    c.innerHTML = `<div class="big">${score}/${answered}</div><p>${pct >= 80 ? "Sehr gut, das sitzt." : pct >= 50 ? "Solide. Wiederhole die Fehler." : "Lies das Kapitel nochmal und wiederhole die Fehler."}</p>
+      <div class="row" style="width:100%"><button class="btn primary" id="again">Nochmal mischen</button><button class="btn" id="towrong">Fehler wiederholen</button></div>`;
+    $("again").onclick = build;
+    $("towrong").onclick = () => { mode = "wrong"; build(); };
+    return;
+  }
+  const it = queue[pos];
+  c.className = "card";
+  const meta = `<div class="meta"><span>${esc(it.deckTitel)}</span><span>${pos + 1} / ${queue.length}</span></div>`;
+  if (it.type === "card") {
+    c.innerHTML = `${meta}<p class="term">${esc(it.term)}</p>
+      <div id="ans" hidden class="answer">${esc(it.def)}</div>
+      <div class="row" id="act"><button class="btn primary" id="show">Antwort zeigen</button></div>`;
+    $("show").onclick = () => {
+      $("ans").hidden = false;
+      $("act").innerHTML = `<button class="btn bad" id="no">Nochmal</button><button class="btn ok" id="yes">Gewusst</button>`;
+      $("yes").onclick = () => { mark(it.id, true); score++; answered++; pos++; render(); };
+      $("no").onclick = () => { mark(it.id, false); answered++; queue.push(it); pos++; render(); };
+      $("yes").focus();
+    };
+  } else {
+    const order = shuffle(it.o.map((t, i) => i));
+    c.innerHTML = `${meta}<p class="q">${esc(it.q)}</p>
+      <div class="opts">${order.map((oi, k) => `<button class="opt" data-i="${oi}"><b>${"ABCD"[k]}</b><span>${esc(it.o[oi])}</span></button>`).join("")}</div>
+      <div id="fb"></div>`;
+    c.querySelectorAll(".opt").forEach(b => b.onclick = () => {
+      const pick = +b.dataset.i, ok = pick === it.a;
+      c.querySelectorAll(".opt").forEach(x => { x.disabled = true; if (+x.dataset.i === it.a) x.classList.add("right"); });
+      if (!ok) b.classList.add("wrong");
+      mark(it.id, ok); answered++; if (ok) score++;
+      $("fb").innerHTML = `<div class="expl"><strong>${ok ? "Richtig." : "Falsch."}</strong> ${esc(it.e)}</div>
+        <div class="row" style="margin-top:12px"><button class="btn primary" id="next">Weiter</button></div>`;
+      $("next").onclick = () => { pos++; render(); };
+      $("next").focus();
+      overall();
+    });
+  }
+}
+
+sel.onchange = build;
+$("m-mc").onclick = () => { mode = "mc"; build(); };
+$("m-card").onclick = () => { mode = "card"; build(); };
+$("m-wrong").onclick = () => { mode = "wrong"; build(); };
+$("reset").onclick = () => {
+  const b = $("reset");
+  if (b.dataset.armed) { store = {}; save(); delete b.dataset.armed; b.textContent = "Fortschritt zurücksetzen"; build(); }
+  else { b.dataset.armed = "1"; b.textContent = "Wirklich löschen? Nochmal tippen"; setTimeout(() => { delete b.dataset.armed; b.textContent = "Fortschritt zurücksetzen"; }, 4000); }
+};
+build();
+</script>

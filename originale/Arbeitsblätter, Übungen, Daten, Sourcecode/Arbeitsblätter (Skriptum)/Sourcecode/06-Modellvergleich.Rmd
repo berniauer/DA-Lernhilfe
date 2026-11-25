@@ -1,0 +1,319 @@
+---
+title: "Modellvergleich"
+author: "Arno Hollosi"
+lang: "de"
+papersize: A4
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    includes:
+      in_header: my-styles.tex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, message=FALSE, warning=FALSE,
+                      fig.width=7, fig.height=4, 
+                      R.options=list(digits=2))
+library(splines)
+library(dplyr)
+library(ggplot2)
+library(rstanarm)
+library(daatools)
+```
+
+# Modellvergleich
+
+Ein typischer Arbeitsablauf bei der Modellierung ist, dass wir im Laufe der Analyse mehrere Modelle aufstellen. Diese können unterschiedliche Variable verwenden oder unterschiedliche Ansätze. Wie können wir diese Modelle vergleichen? Wie kann man bestimmen, ob ein Modell ein besserer Fit als ein anderes ist?
+
+Wir setzen immer voraus, dass das Sampling (also die Berechnung) bei allen Modellen passt. Ansonsten können wir den Modellparametern nicht ausreichend vertrauen.
+
+## Beispiel: Ertrag in Landwirtschaft
+
+Als Beispiel-Datensatz verwenden wir einen (synthetischen) Datensatz zum Ernte-Ertrag einer Landwirtschaft: als Daten haben wir Wassermenge (Niederschlag bzw. Bewässerung), Index für Bodenqualität und Menge des Düngers. Wir haben im Laufe der Analyse vier Modelle erstellt, die wir auf Basis unseres Fachwissens immer weiter verfeinert haben. Unter anderem haben wir modelliert, dass der Ernteertrag nicht-linear mit Wasser zusammenhängt, da entweder zu wenig oder zu viel Wasser schlecht ist und eine optimale Wassermenge den Ernteertrag maximiert. Auch haben wir bspw. in Modell 2 eingebaut, dass der Nutzen von zusätzlichem Dünger mit der Menge abnimmt (Sättigungseffekt), bzw. dass es auch einen Zusammenhang (Interaktion) zwischen Dünger und Wassermenge gibt (Modell 4).
+
+```{r echo=FALSE, cache=TRUE}
+# Synthetische Daten: Ernteertrag in der Landwirtschaft
+set.seed(2026)
+n = 1650
+# Erklärende Variablen
+df = data.frame(
+  duenger = round(runif(n, 0, 250), 1),   # kg Stickstoff pro ha
+  wasser  = round(runif(n, 100, 650), 1), # mm Wasser pro Saison
+  boden   = round(runif(n, 1, 10), 1)     # Bodenqualität: 1 bis 10
+)
+# Datengenerierender Prozess
+# Dünger: logarithmischer Sättigungseffekt
+# Wasser: Optimum etwa bei 400 mm (ohne Interaktion)
+# Boden: linearer Einfluss
+# Interaktion: positiver Düngereffekt bei mehr Wasser
+df$ertrag = with(df,
+  1.5 + 0.85 * log1p(duenger) + 0.22 * boden +
+    0.018 * wasser - 0.0000225 * wasser^2 +
+    4*0.00045 * log1p(duenger) * (wasser - 400) +
+    rnorm(n, 0, 0.9)
+)
+# Ertrag in t/ha
+df$ertrag <- round(pmax(df$ertrag, 0.23), 2)
+split_random(df, 1200, "df_train", "df_test")
+```
+```{r cache=TRUE}
+# Erstes Modell: einfach alle Variablen hineingeben
+modell1 = stan_glm(ertrag ~ boden + duenger + wasser,
+                   data=df_train, seed=1234, refresh=0)
+# Zweites Modell: Einfluss von Dünger nimmt mit zunehmender Menge ab
+modell2 = stan_glm(ertrag ~ boden + log1p(duenger) + wasser,
+                   data=df_train, seed=1234, refresh=0)
+# Drittes Modell: zu wenig, aber auch zu viel Wasser ist schlecht ->
+#                 nicht-linearen Zusammenhang als quadratische Kurve modellieren
+modell3 = stan_glm(ertrag ~ boden + log1p(duenger) + wasser + I(wasser^2),
+                   data=df_train, seed=1234, refresh=0)
+# Viertes Modell: Wirkung des Düngers verändert sich mit Wassermenge (Interaktion)
+modell4 = stan_glm(ertrag ~ boden + log1p(duenger)*wasser + I(wasser^2),
+                   data=df_train, seed=1234, refresh=0)
+```
+
+Sampling hat bei allen vier Modellen funktioniert. Wir wollen jetzt in Folge gar nicht die einzelnen Koeffizienten interpretieren, sondern uns ausschließlich auf den Modellvergleich fokussieren.
+
+# Posterior-Predictive Checks
+
+Ein wichtiger Schritt ist, dass wir überprüfen, ob das Modell eine gute Beschreibung des Datensatzes darstellt. Dazu verwenden wir die bekannten Diagnose-Funktionen, um den Fit des Modells zu überprüfen. Einerseits ist diese grafische Inspektion wichtig und wertvoll, andererseits ist es gerade bei einer visuellen Inspektion teilweise schwierig, ein eindeutiges Votum abzugeben -- vor allem wenn die Verteilungen ähnlich aussehen oder der Unterschied schwer beschreibbar ist. Aus diesem Grund versuchen wir das Gesehene auch in Metrik zu fassen.
+
+## Verteilung des Datensatzes
+
+Schauen wir erstes darauf, wie die Modelle die Verteilung des Datensatzes nachbilden können. Wie im folgenden Diagramm zu sehen, kann man argumentieren, dass das Modell 1 den Datensatz nicht optimal trifft. Allerdings ist bspw. der Unterschied zwischen Modell 3 und Modell 4 rein visuell nicht eindeutig bestimmbar.
+
+```{r echo=FALSE}
+par(mfrow=c(2,2), mar=c(2,1,3,1))
+diagnose_density(modell1, main="Modell 1", xlim=c(2,17))
+diagnose_density(modell2, main="Modell 2", xlim=c(2,17))
+diagnose_density(modell3, main="Modell 3", xlim=c(2,17))
+diagnose_density(modell4, main="Modell 4", xlim=c(2,17))
+```
+
+## Vorhersage von Y: $y \leftrightarrow \hat{y}$-Plot
+
+Sehen wir uns die Abweichung zwischen $y$ (Datensatz) und $\hat y$ (Vorhersage des Modells) an. Hier ist rein visuell kein Unterschied zwischen den Modellen auszumachen.
+
+```{r echo=FALSE}
+par(mfrow=c(2,2))
+diagnose_y_vs_yhat(modell1, samples=FALSE, main="Modell 1")
+diagnose_y_vs_yhat(modell2, samples=FALSE, main="Modell 2")
+diagnose_y_vs_yhat(modell3, samples=FALSE, main="Modell 3")
+diagnose_y_vs_yhat(modell4, samples=FALSE, main="Modell 4")
+```
+
+
+## Residuen
+
+Die Residuenplots sind etwas eindeutiger. Bei Modell 1 sieht man eine Krümmung ("Banane"), die auch durch viele Datenpunkte gestützt ist. Auch bei Modell 2 sieht man vor allem im Bereich zwischen 7 und 12 eine Krümmung, die durch viele Datenpunkte gestützt ist; die Abweichung im Bereich 4..6 ist nur durch wenige Punkte gegeben. Dem sollten wir nicht zu viel Gewicht beimessen. Bei Modell 3 sieht die Abweichung geringer als in Modell 2 aus; wieder mit Ausnahme des Bereichs 4..6, wo allerdings nur wenige Punkte liegen. Modell 4 hat in Summe die geringsten Abweichungen bei den Residuen. 
+
+Die Residuenplots geben uns also Hinweise darauf, dass es einen nicht-linearen Zusammenhang gibt, der in Modell 1 & 2 noch nicht modelliert ist, in Modell 3 & 4 aber schon. Wir können daraus ableiten, dass es ein weiteres Indiz gibt, dass Modell 1 (wahrscheinlich) das Schlechteste ist, gefolgt von Modell 2. Modell 3 und 4 sehen gut aus, wobei Modell 4 auch den Bereich bei kleinen $y$ gut abbildet.
+
+```{r echo=FALSE}
+par(mfrow=c(2,2))
+diagnose_residual(modell1, samples=FALSE, main="Modell 1")
+diagnose_residual(modell2, samples=FALSE, main="Modell 2")
+diagnose_residual(modell3, samples=FALSE, main="Modell 3")
+diagnose_residual(modell4, samples=FALSE, main="Modell 4")
+```
+
+Es gibt sogenannte *Partial Residual Plots*, die Residuen im Kontext einer einzelnen Variable darstellen. Für die Modelle 1 und 3 sehen sie für Wasser wie unten aus. Die blaue Linie zeigt Zusammenhang zwischen Wasser und Ertrag laut Modell. Die rote Linie zeigt eine geglättete Kurve durch die partiellen Residuen. Stimmen beide Linien gut überein, ist das ein Hinweis darauf, dass das Modell den Zusammenhang ausreichend gut beschreibt.
+
+In unserem Fall ist klar zu sehen, dass bei Modell 1, welches den quadratischen Zusammenhang von Wasser nicht modelliert, eine starke Abweichung zwischen der Vorhersage und den Daten gibt. Bei Modell 3, welches den quadratischen Zusammenhang enthält, deckt sich die (blaue) Vorhersage ist sehr gut mit den (roten) Residuen.
+
+```{r echo=FALSE}
+patchwork::wrap_plots(
+  visreg::visreg(modell1, "wasser") + geom_smooth(color="red4", se=F) + theme_minimal() + labs(title="Modell 1"),
+  visreg::visreg(modell3, "wasser") + geom_smooth(color="red4", se=F) + theme_minimal() + labs(title="Modell 3")
+)
+```
+
+# Bestimmtheitsmaß: $R^2$
+
+$R^2$ gibt an, welcher Anteil der Varianz im Datensatz durch das Modell erklärt wird. Daraus können wir ableiten, dass Modelle mit höherem $R^2$ den Datensatz besser nachbilden. Wie schon anderenorts erwähnt, sollten wir diese Zahl nie isoliert betrachten, aber im Kontext einer vollständigen Analyse können wir auch diese Zahl zur Einschätzung mit einbeziehen.
+
+```{r echo=FALSE, cache=TRUE}
+r2_m1 = bayes_R2(modell1)
+r2_m2 = bayes_R2(modell2)
+r2_m3 = bayes_R2(modell3)
+r2_m4 = bayes_R2(modell4)
+
+knitr::kable(data.frame(row.names = c("Modell 1", "Modell 2", "Modell 3", "Modell 4"),
+                 r2=c(mean(r2_m1), mean(r2_m2), mean(r2_m3), mean(r2_m4))),
+                 col.names=c("R²"))
+```
+
+Auch hier spiegelt sich wieder, was wir bereits visuell vermutet haben. Modell 1 hat das geringste $R^2$, Modell 4 das höchste. D.h. auch $R^2$ liefert uns ein weiteres Indiz, dass die Modelle unterschiedliche Güte haben. Vergessen wir jedoch nicht, dass $R^2$ eine vollständige Verteilung hat wie unten gezeigt. Ob die Unterschiede also tatsächlich eine praktische Bedeutung haben oder nicht, können wir (wenn überhaupt) nur im Kontext der anderen Tests beurteilen. Es sieht zumindest so aus, als wären Modell 3 und 4 ein deutlich besserer Fit für den Datensatz als Modell 1 und 2.
+
+```{r echo=FALSE}
+par(mfrow=c(2,2), mar=c(3,1,2,1))
+plothist(r2_m1, main="R² Modell 1")
+plothist(r2_m2, main="R² Modell 2")
+plothist(r2_m3, main="R² Modell 3")
+plothist(r2_m4, main="R² Modell 4")
+```
+
+Achtung: Ein höheres $R^2$ bedeutet nicht automatisch, dass ein Modell neue Daten besser vorhersagt. Insbesondere berücksichtigt $R^2$ nicht direkt, ob die zusätzliche Modellkomplexität gerechtfertigt ist. Genau deshalb benötigen wir weitere Vergleichsverfahren wie Cross-Validation (siehe unten).
+
+# Vorhersage neuer Daten: Train vs. Test
+
+Ein sehr aussagekräftiges Kriterium ist, wie gut ein Modell neue Daten vorhersagt. Wenn unsere Aufgabenstellung ist, zukünftige Daten vorherzusagen, dann ist dies das entscheidende Kriterium. Aber auch wenn wir "nur" Analyse bestehender Daten betreiben, ist eine solche Vorhersage ein wichtiges Indiz, um zu wissen, ob unser Modell gut generalisiert, also die zu Grunde liegenden Eigenschaften des Datensatzes gut erfasst.
+
+Wir sagen also auf Basis unseres Modells neuen Daten für die Y-Werte vorher. Dann sehen wir uns an, wie stark die Vorhersagen von unserem echten Y abweichen. Es gibt verschiedene Maßzahlen dafür, häufig werden bei Regressionsmodellen *RMSE* (root mean squared error) und *MAE* (mean absolute error) verwendet. Unser `daatools`-Paket hat dafür auch eine passende Funktion bereit: `prediction_metrics()`. Für unsere vier Modelle sehen die Ergebnisse zusammengefasst wie folgt aus:
+
+```{r echo=FALSE, cache=TRUE}
+pm1 = prediction_metrics(modell1, df_test)
+pm2 = prediction_metrics(modell2, df_test)
+pm3 = prediction_metrics(modell3, df_test)
+pm4 = prediction_metrics(modell4, df_test)
+
+knitr::kable(
+  rbind(pm1, pm2, pm3, pm4) |>
+  filter(Dataset=='New data') |>
+  select(RMSE, MAE, Skill) |>
+  mutate(daten=c('Modell 1', 'Modell 2', 'Modell 3', 'Modell 4')) |>
+  tibble::column_to_rownames('daten'))
+```
+
+Auch bei den Vorhersagen ist Modell 4 das jene mit dem kleinsten Vorhersagefehler bzw. mit dem größten Skill. Das heißt, auch dieser Test deutet darauf hin, dass Modell 3 und 4 gut sind, Modell 1 aber das am wenigsten geeignete (das mit dem größten Vorhersagefehler).
+
+Nun ist unser Train-Test-Split zwar zufällig gewählt, aber vielleicht haben wir ja einen zufälligen Split erwischt, der Modell 1 oder 2 besonders schlecht aussehen lässt oder Modell 4 besonders gut. Um uns abzusichern sollten wir eigentlich diesen Train-Test-Split mehrfach wiederholen, die Modelle mehrfach rechnen und uns ansehen, ob und wie sich die Eigenschaften verändern.
+
+Das ist nicht nur rechenaufwendig. Wir geben auch immer einen gewissen Prozentsatz unserer Daten für das Testen auf. Dadurch sind unsere Koeffizienten weniger genau bestimmt, als sie es wären, wenn wir den gesamten Datensatz verwenden würden. Eine mögliche Lösung: Cross-Validation.
+
+# Cross Validation
+
+Wie diskutiert ist ein Ansatz, die Vorhersagekraft eines Modells zu bestimmen, den Datensatz in zwei Teile zu teilen: in einen Trainingsdatensatz und einen Testdatensatz. Das Extrem der Cross-Validierung ist, nur einen _einzigen_ Datensatz zum Testen zu verwenden und alle anderen zum Trainieren; und das in Folge mit allen Datensätzen durchzuspielen. Bei unserem Ernteertrag-Training-Datensatz hieße das also 1200-mal eine Regression mit 1199 Datensätzen durchzurechnen und den jeweils verbleibenden Datensatz vorherzusagen. Da das zu langsam ist, gibt es bei dieser *leave-one-out*-Validierung (*loo*) Algorithmen, um die zugehörigen Werte näherungsweise zu berechnen:
+  
+```{r cache=TRUE}
+loo1 = loo(modell1)
+loo1
+```
+
+*elpd_loo* misst, wie gut das Modell neue Beobachtungen (voraussichtlich) vorhersagen kann. Je größer der Wert, desto besser. *looic* enthält dieselbe Information auf einer anderen Skala[^1]: hier ist der kleinere Wert besser. *p_loo* beschreibt die effektive Modellkomplexität. Die absoluten Werte von *elpd_loo* bzw. *looic* sind für sich alleine nicht aussagekräftig, da der genaue Wert von Anzahl der Datensätze und deren Wertebereich abhängt. Es kann aber genützt werden, um Modelle zu vergleichen.
+
+[^1]: $looic = -2 \times elpd_{loo}$
+
+Nach demselben Prinzip kann auch $R^2$ auf Basis der erklärten Varianz für die jeweils ausgelassenen Datensätze berechnet werden. Typischerweise ist `loo_R2` etwas kleiner als `bayes_R2`, ist aber ein besseres Indiz für die Vorhersagekraft eines Modells:
+  
+```{r cache=TRUE}
+mean(loo_R2(modell1))
+```
+
+## Vergleich
+
+Wenn wir nun unsere Modelle vergleichen wollen, dann berechnen wir `loo` für alle vier Modelle.
+
+```{r echo=FALSE, cache=TRUE}
+loo2 = loo(modell2)
+loo3 = loo(modell3)
+loo4 = loo(modell4)
+
+# Vergleich von looic
+knitr::kable(data.frame(
+  rbind(loo1$estimates['looic', ], loo2$estimates['looic', ],
+        loo3$estimates['looic', ], loo4$estimates['looic', ]),
+  row.names=c("Modell 1", "Modell 2", "Modell 3", "Modell 4")),
+  col.names=c("looic", "Std.-Fehler"))
+```
+
+Die *looic*-Werte sind vergleichbar, da alle vier Modelle dieselben abhängige Variable (`ertrag`) haben. Je kleiner, desto besser die Vorhersagekraft. Also haben Modell 3 und Modell 4 eine bessere Erklärungskraft als Modell 1 und 2. Der angebenen Standardfehler zeigt an, wie genau die Schätzung von *looic* ist. Die Funktion `loo_compare()` bezieht die Verteilung in die Differenzbildung ein.
+  
+```{r}
+# Differenz zum besten Modell (hier: modell4)
+loo_compare(loo1, loo2, loo3, loo4)
+```
+
+Die Tabelle zeigt, um wie viel schlechter die anderen Modelle gegenüber dem besten Modell abschneiden.Das beste Modell steht in der ersten Zeile ($elpd\_diff = 0$).Die Spalte $elpd\_diff$ zeigt den Verlust an Vorhersagegüte der anderen Modelle im Vergleich zum besten Modell. Ein Unterschied ist relevant, wenn $|elpd_{diff}| > 2 \times se_{diff}$. Sonst können wir nicht zuverlässig sagen, welches Modell tatsächlich besser vorhersagt. Ein Modell kann also den besten Zahlenwert haben, ohne dass dieser Vorsprung überzeugend ist. In unserem Fall ist Modell 4 aber deutlich (d.h. knapp 5x se_diff) besser als Modell 3.
+
+## Einfluss einzelner Datensätze
+
+Die näherungsweise Berechnung durch *leave-one-out* erzeugt ein interessantes Nebenprodukt: wie stark einzelne Datensätze die Koeffizienten beeinflussen[^2]. Man könnte stark abweichende Datensätze mit großem Einfluss auch als "Ausreisser" bezeichnen. In der Ausgabe von `loo()` findet man schon den Hinweis auf die *pareto k estimates*. Details der Berechnung sollen uns hier nicht interessieren. Wichtig für die praktische Anwendung ist:
+  
+[^2]: genauer gesagt, ob die Importance-Sampling-Näherung, die loo im Hintergrund ausführt, zuverlässig funktioniert hat. Ein hoher Wert kann darauf hinweisen, dass das Entfernen dieser Beobachtung die Posteriorverteilung stark verändert.
+
+* Pareto-k-Werte < 0.7 (auch negativ möglich) sind gut (Näherungsmethode hat gut funktioniert)
+* 0.7 < Pareto-k-Werte < 1 sind ein Graubereich
+* Pareto-k-Werte > 1 sollten genauer inspiziert werden, da hier die Näherungsmethode nicht funktioniert hat, also z.B. *looic* ungenau bestimmt sein könnte und es typischerweise auf Ausreisser bzw. stark einflussreiche Punkte hindeutet.
+
+Manchmal schlägt die Näherungsmethode aber unnötig Alarm. Dann kann man den Wert eines Datensatzes durch echtes Durchrechnen der zugehörigen Regression bestimmen und nicht durch die Näherungsrechnung. Sehen wir uns z.B. die Pareto-k-Werte beim Modell 4 an:
+  
+```{r}
+# alle Werte <0.5
+top_pareto_k_influence_values(loo4)
+```
+
+Bzw. als Diagramm:
+  
+```{r}
+plotpkiv(loo4)
+```
+
+Wie sähen Fehler aus? Fügen wir einfach zwei Ausreisser hinzu:
+  
+```{r cache=TRUE}
+# Wir erzeugen uns einen neuen kleineren Trainingsdatensatz, damit die
+# 'ungewöhnlichen' Punkte deutlich ins Gewicht fallen
+split_random(df, 200, "df_train2a", "df_test2a")
+df_train2b = df_train2a
+df_train2b["395",]$ertrag = 18
+df_train2b["1018",]$ertrag = 0.5
+
+modell1a = update(modell1, data=df_train2a) # Modell ohne Ausreisser
+modell1b = update(modell1, data=df_train2b) # Modell mit Ausreisser
+
+loo1b = loo(modell1b)
+loo1b
+```
+```{r echo=FALSE}
+plotpkiv(loo1b)
+```
+
+Die roten Punkte im Scatterplot sind die beiden Ausreisser, die schwarze Linie ist die Regressionslinie des ursprünglichen Datensatzes ohne Ausreisser, die rote Line stellt die Regressionslinie des Datensatzes mit den Ausreissern dar:
+  
+```{r echo=FALSE}
+wasser_seq = seq(100, 650, length.out=100)
+ggplot(df_train2b, aes(wasser, ertrag, color=ifelse(ertrag>15 | ertrag < 1, "red", "black"))) +
+  geom_point(alpha=0.25) +
+  geom_line(data=data.frame(x=wasser_seq, y=margin_curve(modell1a, df_train2a, 'wasser', wasser_seq)),
+            aes(x, y.estimate, color="black")) +
+  geom_line(data=data.frame(x=wasser_seq, y=margin_curve(modell1b, df_train2a, 'wasser', wasser_seq)),
+            aes(x, y.estimate, color="red")) +
+  scale_color_identity() +
+  labs(x="Wasser [mm]", y="Ertrag [t/ha]") +
+  theme_minimal()
+```
+
+### Ausreisser entfernen?
+
+Eine umstrittene Frage ist, ab wann Datenpunkte, welche die Regressionsgerade arg verschieben bzw. drehen, aus dem Datensatz entfernt werden sollen. Bei eindeutigen Messfehlern bzw. Aufzeichnungsfehlern (z.B. Person, die 1.76cm groß ist anstatt 176cm) sollte -- sofern der Fehler nicht korrigiert werden kann -- der Datensatz entfernt werden. Sonst tendiert man heute dazu, den Datensatz beizubehalten, weil das Messergebnis vielleicht unerwartet war, aber offensichtlich dennoch möglich. Im Zweifel kann man auch Sensitivitätsanalysen durchführen: Wie verändert sich das Ergebnis mit und ohne die fraglichen Beobachtungen?
+
+Es gibt sogenannte robuste Regressionsvarianten, welche z.B. anstelle der Normalverteilung die t-Verteilung verwenden, welche "dickere Ausläufer" hat und damit die großen Residuen der Ausreisser abdecken bzw. erfassen können, ohne dass sich die Koeffizienten wesentlichen ändern müssen. Während MC-Stan selbst diese Möglichkeit bietet, gibt es leider keine robuste Variante in den vorkompilierten Modellen von `rstanarm`.
+
+# Gleiche Daten
+
+Unsere Modellvergleiche setzen voraus, dass alle Modelle mit den gleichen Daten trainiert wurden. Im Allgemeinen müssen wir daher aufpassen, dass:
+
+* alle Modelle die gleiche Y-Variable haben: Viele Vergleichsverfahren setzen voraus, dass Y in allen Modellen identisch ist. Wird die abhängige Variable in einem Modell bspw. logarithmiert, sind manche Vergleiche nicht mehr oder nur mit Anpassungen möglich.
+* alle Modelle die gleiche Anzahl an Daten haben: Fehlen beispielsweise bei 3% der Beobachtungen Angaben zum Dünger, kann ein Modell ohne diese Variable mehr Daten nutzen als eines mit Dünger. Ein direkter Vergleich wird dadurch problematischer.[^3]
+
+[^3]: Eine mögliche Lösung wäre Imputation fehlender Daten. Ob diese sinnvoll ist (und welche potentielle Probleme diese mit sich bringt), ist allerdings eine eigene Fragestellung auf die wir hier nicht näher eingehen können.
+
+Anzahl und Wertebereiche der unabhängigen Variablen ($x_1 .. x_n$) sind hingegen für den Modellvergleich egal, dürfen also variieren.
+
+# Welches Modell ist besser?
+
+Nachdem wir die vier Modelle nun ausführlich verglichen haben, fällt unsere Wahl auf Modell 4. Es beschreibt die vorliegenden Daten besser und erzielt auch bei der Crossvalidierung und bei Vorhersagen auf neuen Daten geringere Fehler. In der Praxis würden wir daher Modell 4 wählen. Zusammengefasst haben wir folgende Tests durchgeführt:
+
+| Verfahren | Was beurteilen wir? |
+| --- | ---- |
+| Posterior-Predictive Checks	| Kann das Modell die beobachteten Daten plausibel nachbilden? |
+| Residuen / Partial Residuals | Haben wir systematische Zusammenhänge übersehen? |
+| $R^2$ |	Wie gut beschreibt das Modell die Varianz der beobachteten Daten? |
+| RMSE / MAE auf Testdaten | Wie groß sind die Vorhersagefehler auf neuen Daten? |
+| LOO | Wie gut sagt das Modell voraussichtlich neue Beobachtungen vorher, unter Berücksichtigung der gesamten prädiktiven Verteilung? |
+
+Beim Modellvergleich sollten wir uns also nie auf eine einzelne Kennzahl verlassen: die verschiedenen Tests sollten ein einigermaßen einheitliches Bild ergeben. Widersprechen sich die Ergebnisse, müssen wir genauer hinsehen und unsere Schlussfolgerungen entsprechend vorsichtiger formulieren.
+
+Nicht immer jedoch ist das mathematisch "beste" Modell, das zu bevorzugende. Ein komplexeres Modell kann zwar bessere Vorhersagen machen, ist dafür aber häufig schwieriger zu interpretieren (oder enthält Variablen, die schwerer zu messen sind). In unserem Beispiel stellt sich daher die Frage, ob die Verbesserung von Modell 4 gegenüber Modell 3 groß genug ist, um den zusätzlichen Interaktionsterm zu rechtfertigen. Für die Kommunikation ist Modell 3 deutlich besser geeignet -- und wir können auch argumentieren, dass es für unsere Fragestellung ausreichend gute Vorhersagen liefert.

@@ -1,0 +1,249 @@
+---
+title: "Bayes & Sampling: Testen des Modells"
+author: "Arno Hollosi"
+lang: "de"
+papersize: A4
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    includes:
+      in_header: my-styles.tex
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(lattice)
+knitr::opts_chunk$set(echo = TRUE, fig.width=7, fig.height=3)
+library(rstanarm)
+# options(mc.cores = parallel::detectCores())
+library(bayesplot)
+library(daatools)
+```
+
+# MC-Stan
+
+Wir verwenden MC-Stan (http://mc-stan.org/), einen MCMC-Sampler, zur Berechnung unserer Modelle; konkret das Paket `rstanarm`, das vorgefertigte, generische Modelle enthält, welche sich ganz ähnlich zu den klassischen Funktion (`lm()`, `glm()`) verwenden lassen. Setzen wir das Beispiel mit dem Körpermaßdatensatz fort: Erstellen wir ein Modell, das die durchschnittliche Größe abhängig vom Geschlecht und dem Knieumfang berechnet.
+
+```{r}
+body = read.csv('daten/body-dimensions.csv', stringsAsFactors = TRUE)
+
+model = stan_glm(
+  formula = Height ~ Gender + Knee.girth, data = body,
+  # Wir geben mal als Beispiel eigene Priors an
+  prior_intercept = normal(170, 10),
+  prior = normal(c(0, 0), c(25, 15)), # Reihenfolge wie in Formel: Gender, Knee
+  prior_aux = exponential(3/10),
+  refresh=0
+)
+
+# Ergebnis ansehen
+print(model, digits=2)
+```
+
+Das Ergebnis zeigt, dass (bei ansonsten gleichen Merkmalen) ein Mann 10.7cm größer als eine Frau ist und je Zentimeter Knieumfang die Größe um 1.1cm zunimmt. Die Residuen sind mit einer Standardabweichung von 6.3cm im erwarteten Bereich.
+
+Wir wollen uns nun in Folge vier Fragen stellen:
+
+1. Hat die Berechnung/das Samplen funktioniert?
+2. Reproduziert das Modell die wesentlichen Eigenschaften der beobachteten Daten?
+3. Enthält das Modell systematische Fehler?
+4. Funktioniert es bei unbekannten Daten?
+
+Können wir alle vier Fragen positiv beantworten, dann haben wir ein brauchbares Modell.
+
+
+# Kontrolle des Sampelns
+
+Man kann sich das Samplen als eine Wanderung (bzw. Springen) durch die Wahrscheinlichkeits-Landschaft der Daten & Koeffizienten vorstellen. MC-Stan unternimmt vier solcher Wanderungen parallel (=4 chains). In Summe sollten alle vier Pfade zum selben Ergebnis kommen, nicht auf der Stelle herumtreten (sie sollen stattdessen die gesamte Landschaft erkunden). Die Befehle `summary()` bzw. `info()` geben uns die notwendige Information:
+
+```{r}
+info(model)
+```
+
+`n_eff` gibt uns die effektive Schrittzahl, also "wie weit" der Pfad in der Landschaft herumführt oder ob er "auf der Stelle tritt". Bei 4000 Samples (4 Pfade á 1000 Samples) ist es gut, wenn es mehr als 2000 effektiver Sampling-Schritte sind. Unter 400 wäre schlecht. In unserem Modell sieht das gut aus.[^1]
+
+[^1]: Dass auch $n_{eff} > 4000$ vorkommt hängt damit zusammen, dass die Zahl eine Heuristik ist und keine genaue Berechnung.
+
+Die Spalte `Rhat` gibt an, ob die Pfade (vereinfacht ausgedrückt) zum selben Ergebnis kommen. $Rhat=1$ bedeutet: ja, alles passt. Werte größer als 1.1 sind problematisch. Wir können das auch graphisch überprüfen, mit dem sogenannten *trace plot*:
+
+```{r}
+mcmc_trace(model)
+```
+Das sieht wie Rauschen aus und ist auch gut so :o) Wir sehen 4 Pfade in unterschiedlichen Farben, die sich alle im selben Bereich befinden (also kein Pfad befindet sich völlig abseits der anderen). Es sind auch keine deutlichen Muster erkennbar wie bspw. Sinuskurven. Genau das drückt auch $Rhat=1$ aus. Urteil: passt.
+
+Die dritte Spalte gibt den Standardfehler des Samplings an (mcse = Monte Carlo Standard Error). Der sollte max. 5% vom MAD (Standardfehler des Koeffizienten) betragen.
+
+In `daatools` haben wir mit `check_smapling()` eine Hilfskunktion, die all diese Werte für uns überprüft:
+
+```{r}
+check_sampling(model)
+```
+In Summe können wir also sagen: ja, das Sampling hat in diesem Fall gut funktioniert.
+
+# Reproduktion der Daten
+
+Wenden wir uns der zweiten Frage zu, ob das Modell die Daten gut erfasst bzw. reproduziert. Nur wenn unsere Vorhersagen ähnlich wie die Daten aussehen, haben wir ein passendes Modell.
+
+## Mittelwert der Vorhersagen
+
+Im Modell gibt es einen Parameter `mean_PPD`. PPD steht für *posterior predictive distribution*, was für die Posterior-Verteilung der __vorhergesagten__ Werte der Daten steht (also `predict()` für Originaldaten). Wir erwarten, dass der Mittelwert dieser Verteilung (`mean_PPD`) in etwa dem Mittelwert der y-Daten entspricht, bei uns also `mean(body$Height)`. Sollten die Mittelwerte deutlich voneinander abweichen, gibt es ein Problem mit dem Modell: es ist offensichtlich nicht in der Lage, Basiseigenschaften der Daten nachzubilden.
+
+## Vergleich der Verteilung
+
+Es gibt eine Reihe weiterer Diagnosen, welche uns zeigen können, wie gut unser Modell den Datensatz abbilden kann. Dazu lassen wir für den __vorliegenden__ Datensatz die Vorhersage des Modells berechnen und vergleichen im Anschluss die Vorhersage mit den echten Werten. Die passende Vorhersage wird in den `diagnose_*()`-Funktionen automatisch berechnet.
+
+Wir wünschen uns, dass die Vorhersage die selbe Verteilung (das selbe Histogramm) wie die Originaldaten haben. Mit `diagnose_density()` können wir uns das ansehen. Es wählt zehn der 4000 Samples[^2] aus und zeigt deren Verteilung (density) im Vergleich zu den Originaldaten (dunkelblau). Es sollte möglichst den gesamten Wertebereich in ähnlicher Form abbilden:
+
+[^2]: jedes Sample besteht aus 507 Vorhersagen: für jede Zeile des Datensatzes in *body* eine Vorhersage.
+
+```{r fig.height=4.3}
+diagnose_density(model)
+```
+Dsa Ergebnis sieht ganz ok aus: die hellblauen Verteilungen (Stichprobe der Vorhersagen des Modells) haben in etwa dieselbe Form wie die der (dunkelblau dargestellten) Daten.
+
+## Statistiken
+
+Da wir 4000 Vorhersagen (Samples) des gesamten Datensatzes (507 Personen) haben, können wir uns auch ansehen, wie gut das Modell Minimum, Maxmimum, Mittelwert, Median und ausgewählte Quantillen des Originaldatensatzes trifft. Am Beispiel des Maximums: wir berechnen von allen 4000 Samples jeweils das Maximum (der 507 Werte je Sample). Damit erhalten wir 4000 Maxima, welche als Histogramm angezeigt werden. Die grüne Linie gibt den Wert der Originaldaten an. Liegen die Originaldaten gut in der Verteilung, trifft unser Modell das Maximum gut. Analog für andere Werte.
+
+```{r fig.height=5}
+diagnose_fit(model)
+```
+Wir sehen, dass die Modellverhersagen (hellblaue Verteilungen) die Werte der Daten treffen. 
+
+In Summe können wir also sagen: das Modell reproduziert die Eigenschaften der Daten gut.
+
+\newpage
+
+# Kontrolle systematischer Fehler
+
+Kommen wir zur dritten Frage, ob unser Modell systematische Fehler aufweist. Dazu schauen wir uns Residuen und Vorhersagewerte an.
+
+## Vergleich der y-Werte
+
+Wenn wir einen Scatterplot von $y \leftrightarrow \hat y$ ansehen, dann würde ein perfektes Modell genau die y-Werte vorhersagen. Der Plot wäre dann eine 45°-Linie. Da unser Modell nicht alle Werte perfekt vorhersagen kann, also Residuen übrig bleiben, wird aus dieser Linie eine mehr oder weniger breite Wolke, die aber immer noch den selben Neigungswinkel haben sollte. Bananenformen etc. sind unerwünscht, deuten sie doch auf einen nichtlinearen Zusammenhang hin. Links oben wird der Mittelwert von einigen hundert Samples angezeigt, der Rest sind y-Werte von acht zufällig ausgewählten Samples.
+
+```{r fig.height=5}
+diagnose_y_vs_yhat(model)
+```
+In unserem Fall sehen wir keine systematische Abweichungen. Das ist gut.
+
+## Residuen
+
+Die Residuen sollten gleichmäßig über den gesamten Wertebereich verteilt sein. Ist das nicht der Fall, gäbe es systematische Abweichungen, welche die Vorhersagekraft des Modells einschränken. Wieder ist links oben der Mittelwert einiger hundert Samples zu sehen sowie acht zufällig ausgewählte Samples. Das erkennbare Muster (zwei Wolken) entsteht, weil die Größe zwischen Frauen und Männern deutlich unterschiedlich ist. Innerhalb der Wolken ist aber kein Muster erkennbar: das ist gut.
+
+```{r fig.height=5}
+diagnose_residual(model)
+```
+Was tun wenn die Residuen Muster zeigen? Fas hängt davon ab, was wir sehen. Sind sie gebogen und kurvig, haben wir es meist mit nicht-linearen Zusammenhängen zu tun, die man modellieren kann; sind sie in Fächerform liegt es typischerweise am falsch gewählten Modell (Varianzmodell); deutliche Gruppenabweichungen kann man hierarchisch in den Griff bekommen etc. Dazu später mehr.
+
+# Korrelation der Parameter
+
+Da wir dank des Samplings echte Verteilungen **und** deren Zusammenhänge kennen, können wir uns auch die Korrelation der Koeffizienten selbst (nicht der Daten!) ansehen:
+
+```{r fig.height=3.5}
+# Korrelation nach Umwandlung mit as.matrix()
+kable(cor(as.matrix(model)), digits = 2)
+
+# und Korrelationsplot
+plotcorr(model)
+```
+
+Idealerweise sollten alle Parameter eine niedrige Korrelation aufweisen, anderenfalls sind die Parameter nur schwer einzeln interpretierbar. In unserem Fall ist `Knee.girth` extrem stark mit dem `Intercept` korreliert. Damit ist der Parameter nicht mehr unabhängig vom Intercept interpretierbar.
+
+Ein Grund dafür ist, dass der Knieumfang eine im Verhältnis zum Wertebereich große Mindestlänge hat (29cm im Datensatz) und deshalb Änderungen im Koeffizienten durch Änderungen im Intercept ausgeglichen werden. Eine Abhilfe ist es, den Knieumfang zu zentrieren (den Mittelwert abzuziehen):
+
+```{r warning=FALSE, message=FALSE, fig.height=3.5}
+body$knee = body$Knee.girth - mean(body$Knee.girth)
+model2 = update(model, ~ Gender + knee)
+
+print(model2, digits=2)
+
+# Korrelationsplot
+plotcorr(model2)
+```
+
+Die Korrelation ist mit 0.3 noch vorhanden (und im Pairs-Plot ersichtlich), aber schon deutlich besser als ohne Zentrierung. Der Wert des `knee`-Koeffizienten selbst hat sich nicht wesentlich verändert. Aber wenn wenn man sich den Intercept ansieht ist nicht nur dessen Wert anders (weil er jetzt die Größe bei durchschnittlichem Knieumfang darstellt), sondern auch das HD-Intervall ist deutlich enger. Grund ist, dass jetzt `Knee.girth` nicht mehr (so stark) "gegen" den `Intercept` arbeitet.
+
+```{r echo=FALSE}
+kable(cbind(hdi(model), hdi(model2)), digits=2)
+```
+
+\newpage
+
+# Beispiel für Fehlerfall
+
+Sehen wir uns ein Beispiel an, in denen die obigen Tests anzeigen, dass etwas nicht ganz passt. Wenn $y$ nicht linear mit den $x$ zusammenhängt, ist einer lineare Regression per se kein gutes Modell. Als Beispiel soll eines der berühmten Fallexperiment von Galileo dienen: auf einer Rampe wird auf einer bestimmten Höhe `height` eine Kugel losgelassen und dann gemessen, wie weit (`dist`) die Kugel fliegt:
+
+```{r message=FALSE, warning=FALSE}
+# Source:  Drake, S. (1978), Galileo at Work, Chicago: University of Chicago Press.
+galileo = read.csv('daten/galileo.csv', stringsAsFactors = TRUE)
+model3 = stan_glm(dist ~ height, data=galileo, refresh=0)
+print(model3, digits=2)
+```
+
+Die Regressionsgerade sähe wie folgt aus -- es ist offensichtlich, dass ein lineares Modell keine gute Beschreibung des Datensatzes ist:
+
+```{r echo=FALSE}
+scatter.smooth(galileo$height, galileo$dist, lpars=list(lty=3), degree=2,
+               xlab='Höhe der Rampe (punti)', ylab='Flugweite (punti)',
+               main='Fallexperiment mit Regressionsgerade', frame=F)
+abline(coef(model3), col='darkblue')
+```
+
+Zwei Diagnosen zeigen uns sofort Auffälligkeiten: zum einen zeigt $y \leftrightarrow \hat y$ eben jene klare Bananenform (links oben), zum anderen sieht man eine ähnliche Bananenform bei den Residuen.
+
+```{r fig.height=5}
+# y vs y_hat (echte vs. vorhergsagte y-Werte)
+diagnose_y_vs_yhat(model3)
+
+# Residuen
+diagnose_residual(model3)
+```
+
+# Generalisierung
+
+Kommen wir zur letzten Frage: sagt das Modell unbekannte Daten gut vorher? In der Praxis würden wir das Modell mit den bestehenden Daten trainieren und dann später neue Messungen unternehmen und schauen wie gut das Modell die neuen Messungen vorhersagt. Da wir in der Lehrveranstaltung selber keine Daten messen, wenden wir einen Trick an. Wir unterteilen die bestehenden Daten in ein Trainingsset und in ein Testset. Die `daatools` stellen dafür wieder eine Hilfsfunktion parat
+
+```{r}
+# Wir erzeugen einen Split mit 350 Datensätzen in body_train & dem Rest (157) in body_test
+split_random(body, 350, "body_train", "body_test")
+# Dann berechnen (bzw. trainieren) wir das Modell nur auf body_train
+model5 = stan_glm(Height ~ Gender + knee,
+                  data = body_train, refresh=0)
+info(model5)
+```
+
+## Metriken
+
+Die `daatools` stellen uns wieder einige Funktionen zur Verfügung, die uns helfen, zu verstehen, wie gut das Modell neue Daten vorhersagen kann. Die Idee dabei ist immer dieselbe: es werden mithilfe des Modells Vorhersagen für die Testdaten gemacht und diese dann mit den echten Testdaten verglichen. Je kleiner der Unterschied bzw. wenn die Fehler in etwa gleich groß sind wie bei den Trainingsdaten, desto besser.
+
+Die erste Funktion gibt uns ein paar Kennzahlen aus:
+
+```{r}
+print(prediction_metrics(model5, body_test), digits=3)
+```
+**RMSE** steht für *root mean square error* und berechnet sich aus $RMSE = \sqrt{\frac{1}{n} \sum_{i=1}^{n}{(y_i - \hat y_i)^2}}$, d.h. Differenz zwischen wahrem und vorhergesagtem Wert wird quadriert, dann gemittelt und die Wurzel gezogen. Diese Metrik nimmt bei starken Ausreißern deutlich zu.
+
+**MAE** steht für *mean absolute error* und berechnet sich aus $MAE = \frac{1}{n} \sum_{i=1}^{n}{|y_i - \hat y_i|}$ und bildet den Durchschnitt des absoluten Fehlers. Im Vergleich zu RMSE gehen also alle Fehler "gleich stark" ein.
+
+**Skill** ist eine einfache Metrik, die 1 ist, wenn das Modell die Daten perfekt vorhersagt, 0 ist wenn das Modell nur so gut ist als würden wir einfach immer den Mittelwert der Daten vorhersagen und negativ, wenn das Modell schlechter ist als einfach den Mittelwert zu bilden (das sollte hoffentlich nie passieren :o)
+
+In unserem Beispiel sehen wir, dass RMSE, MAE und Skill ca. dieselbe Größe bei den Testdaten haben wie die Trainingsdaten selbst. Daraus können wir schließen, dass das Modell gut generalisiert.
+
+## Graphisch
+
+Wir können auch wieder die `diagnose_*`-Funktionen verwenden und sie auf den Testdatensatz anwenden. Dazu übergeben wir die Testdaten als Parameter `newdata=`.
+
+```{r fig.height=4.3}
+diagnose_density(model5, newdata = body_test)
+diagnose_residual(model5, newdata = body_test)
+```
+
+Beide sehen zwar etwas schlechter aus als bei den Trainingsdaten selbst, dennoch noch im Rahmen und ok.
+
+# Zusammenfassung
+
+Wenn wir praxisrelevante Modelle berechnen wollen, werden bei Bayes-Modellen Sampling-Methoden verwendet, die repräsentativ den Parameterraum abdecken. Die Sampler können sich allerdings auch im Parameterraum "verlaufen". Deshalb wird das Sampeln typischerweise in zwei Phasen ("Warmup" & "Sampling") unterteilt und mehrere Durchläufe (*chains*) gestartet. Nur wenn alle Chains das selbe Ergebnis liefern, können wir davon ausgehen, dass das Sampling repräsentativ war.
+
+Mit einigen Diagnosetools können wir verifizieren, ob unser Modell den vorliegenden Datensatz gut beschreibt. Ist das nicht der Fall, bleibt in der Praxis nur, das Modell zu modifizieren. Gelegentlich kann es hilfreich sein, auch die Sampling-Einstellungen zu ändern. Im Rahmen der LV gehen wir darauf aber nicht näher ein.

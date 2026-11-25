@@ -1,0 +1,582 @@
+<!-- Quelle: Arbeitsblätter, Übungen, Daten, Sourcecode/Arbeitsblätter (Skriptum)/Sourcecode/08a-Logistische-Regression.Rmd (R Markdown, Code-Chunks = ```{r}) -->
+
+---
+title: "Logistische Regression"
+author: "Arno Hollosi"
+lang: "de"
+papersize: A4
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    includes:
+      in_header: my-styles.tex
+---
+  
+```{r setup, include=FALSE}
+library(car)
+library(knitr)
+library(ggplot2)
+library(rstanarm)
+library(daatools)
+# options(mc.cores = parallel::detectCores())
+knitr::opts_chunk$set(echo = TRUE, fig.width=7, fig.height=4,
+                      R.options = list(digits=3))
+```
+
+# Motivation
+
+Das lineare Modell beruht auf der Gleichung $y = \alpha + \beta_i x_i + \epsilon$. Dabei ist $y$ die abhängige Variable, welche durch die unabhängigen Variablen $x_i$ "erklärt" wird, $\alpha$ ist der Intercept (Offset bei $x_i = 0$), $\beta_i$ sind die Koeffizienten und $\epsilon$ ist der Fehlerterm (= Residuen). Dem linearen Modell liegt typischerweise eine *Normalverteilung* der Residuen zu Grunde. Zudem setzt das lineare Modell voraus, dass die abhängige Variable eine metrische Variable ist, also beliebige Werte einnehmen kann, addiert, multipliziert und dividiert werden kann[^unabh].
+
+[^unabh]: Unabhängige Variable müssen nicht unbedingt metrisch sein. Sie können beispielsweise auch kategorische Variable sein, welche dann in einem Dummy-Coding auf mehrere Variable, welche nur den Wert 0 oder 1 annehmen, aufgeteilt werden.
+
+In vielen Fällen hat aber die zu untersuchende abhängige Variable aber nur zwei **diskrete** Werte: 0 oder 1. Beispiel: Sterblichkeit bei Krankheit, Bundespräsidentenwahl, Wahl zwischen zwei Alternativen (z.B. beim Marketing), Infektion, Fehler im Produktionsprozess etc. Das lineare Modell ist für solche Werte ungeeignet:
+
+\newpage
+
+  - es kann keine diskrete Ausgangswerte modellieren, nur kontinuierliche Werte
+  - diskrete Werte sind (im Regelfall) nicht normalverteilt
+  - bei Interpretation des Wertebereichs als Wahrscheinlichkeit: die Regressionslinie kann 0 unterschreiten bzw. 1 überschreiten. Selbst wenn wir bei diesen Grenzen die Werte kappen, bedeutet das, dass **keine** Änderung/Verbesserung der unabhängigen Variable mehr eine Änderung in $y$ hervorruft -- in der Praxis recht unrealistisch.
+
+# Generalized Linear Model (GLM)
+
+Das *Generalized Linear Model* (GLM) setzt genau in diesem Punkt an: es erlaubt (a) unterschiedliche Verteilungen der Zielvariablen $y$ und (b) eine sogenannte Link-Funktion $g()$, die den *Erwartungswert* von $y$ transformiert, damit er durch die unabhängigen Variablen erklärt werden kann. Die Grundstruktur des Modells lautet:
+
+$$g(E(y)) = \alpha + \sum \beta_i x_i$$
+
+Die Variabilität der Daten wird direkt durch eine gewählte Verteilung modelliert. Die `glm()`-Funktion in R unterstützt beispielsweise folgende Verteilungen: Binomial, Gamma, Poisson, Quasi-Binomial, Quasi-Poisson und inversen Gauß. Jede Verteilung hat bestimmte Einsatzzwecke.
+
+Wir wenden uns der logistischen Regression zu: ihr liegt eine Binomial-Verteilung zu Grunde. Sie eignet sich, um Regressionen zu rechnen, welche nur zwei diskrete Zielwerte haben.
+
+# Logistische Regression
+
+Die logistische Regression verwendet als Link-Funktion die sogenannte **Logit**-Funktion. Anstelle $y$ direkt zu berechnen, werden Wahrscheinlichkeiten $p = P(y=1)$ berechnet, welche angeben, wie wahrscheinlich $y = 1$ ist. Ein Wert $p = 1$ entspricht also einer Wahrscheinlichkeit von 100%, dass $y = 1$, ein $p = 0.33$ entspricht einer Wahrscheinlichkeit von 33%, dass $y = 1$. Die Regressionsgleichung sieht beim logistischen Modell so aus:
+
+$$log\left(\frac{p}{1-p}\right)=  \alpha + \sum \beta_i x_i$$
+
+Die Link-Funktion $g()$ ist also $logit(p) = log(\frac p {1-p})$. Der Erwartungswert der binomialverteilten Zielvariablen $y \sim \text{Binomial}(1, p)$ ist dabei genau diese Wahrscheinlichkeit $E(y) = p = P(y=1)$.
+
+
+## Beispiel: Strahlendosis
+
+Am Beispiel eines Strahlendosis-Experiments wollen wir uns die logistische Regression veranschaulichen: bei dem Experiment werden Zellen mit einer variablen Dosis bestrahlt und dann getestet, ob (0/1) Schäden im Zellkern entstanden sind. Die Daten könnten wie folgt aussehen:
+
+```{r echo=FALSE, fig.height=5}
+set.seed(42)
+# Beispieldatensatz erzeugen
+dose.ok = rbeta(100, 3, 8)*80
+dose.harm = rbeta(100, 8, 3)*80
+df = data.frame(dosis=c(dose.ok, dose.harm),
+                schaden=c(rep(0,100),rep(1,100)))
+# und anzeigen
+par(mfrow=c(2,2), mar=c(4,4,3,2))
+hist(dose.ok, main="Gesunde Zellen", xlab="Strahlendosis", col="lightblue", xlim=c(0,80))
+hist(dose.harm, main="Beschädigte Zellen", xlab="Strahlendosis", col="lightblue", xlim=c(0,80))
+boxplot(dose.ok, dose.harm, main="Vergleich",names = c("Gesund", "Beschädigt"))
+plot(df$dosis, df$schaden, main="Scatterplot", pch=16, col=rgb(0,0,0, 0.1),
+     xlab="Strahlendosis", ylab="Beschädigt (0/1)")
+```
+
+Wir verwenden wieder die Funktion `stan_glm()`, um die Regressionsrechnung durchzuführen:
+
+```{r cache=TRUE}
+# beachten Sie den Parameter "family"
+modell = stan_glm(schaden ~ dosis, data=df, family=binomial(link="logit"),
+                  seed=1234, refresh=0)
+```
+
+Anstatt gleich auf die Koeffizienten einzugehen, schauen wir uns ein Diagramm an: Schadenswahrscheinlichkeit in Abhängigkeit von der Dosis.
+
+```{r echo=FALSE}
+x = seq(0, 80, 0.1)
+# type=response: predict() soll Wahrscheinlichkeiten liefern
+y = predict(modell, newdata=data.frame(dosis=x), type="response")
+plot(df$dosis, df$schaden, main="Scatterplot + Regression", pch=16, col=rgb(0,0,0, 0.1),
+     xaxp=c(0,70,7), cex=1.5, xlab="Strahlendosis", ylab="Beschädigt (0/1)")
+lines(x, y, col="red")
+```
+
+Der Verlauf der Regressionslinie für die Wahrscheinlichkeit, zeigt uns deutlich das Muster dieser Regression: in den Bereichen, wo die Experimentdaten eindeutig sind (Strahlendosis kleiner 20 bzw. größer 60) gibt auch die Regression ein nahezu eindeutiges Ergebnis. Im Übergangsbereich (Strahlendosis 30..50) nimmt die Anzahl der geschädigten Zellen zu und die Anzahl der gesunden Zellen ab, dementsprechend zeigt auch hier die Regressionslinie eine stetig steigende Wahrscheinlichkeit für Zellschäden.
+
+Diese S-Kurve ist charakteristisch für die logistische Regression. Sie hat auch zur Folge, dass eine Veränderung der Strahlendosis eine *nicht-lineare* Änderung der Schadenswahrscheinlichkeit zur Folge hat. Die folgende Tabelle zeigt ist -- obwohl sich die Strahlendosis immer um 10 ändert -- ist die Differenz (der Zuwachs) der Wahrscheinlichkeit eines Zellschadens sehr unterschiedlich.
+
+```{r echo=FALSE}
+x = c(10, 20, 30, 40, 50, 60)
+y = predict(modell, newdata=data.frame(dosis=x), type="response")
+kable(data.frame(Strahlendosis=x, Wahrscheinlichkeit=y,
+                 Differenz=c("-", round(y[2:6]-y[1:5], 3))))
+```
+
+Wie kann man diese Änderung anders beschreiben? Wenn wir die Wahrscheinlichkeit als *odds* (d.h. als Chancen im Sinne von Wettchancen) ausdrücken, sieht es gleich besser aus. Chancen werden als $x : y$ ausgedrückt. Beispiel: eine Chance von 1:1 (sprich "1 zu 1") entspricht 50% Wahrscheinlichkeit; wenn die Chancen 2:1 ("2 zu 1") stehen entspricht das einer 66% Wahrscheinlichkeit; wenn die Chancen 1:2 ("1 zu 2") stehen entspricht das 33% Wahrscheinlichkeit. Einige weitere Beispiele werden in der Tabelle gezeigt:
+
+| Chance | Wahrscheinlichkeit |
+| --- | --- |
+| 1:1 | 50% |
+| 3:1 | 75% |
+| 10:1 | 91% |
+| 2:3 | 40% |
+| 1:5 | 17% |
+
+Die Umrechnung von Chancen (odds) zu Wahrscheinlichkeit (p) bzw. umgekehrt geht wie folgt:
+
+$$
+\begin{aligned}
+odds(p) = \frac{p}{1 - p} &\qquad p = P(y=1)= \frac{odds(p)}{1 + odds(p)}
+\end{aligned}
+$$
+
+Schauen wir uns nochmal die Vorhersagen des Modells zu Strahlendosis und Zellschaden an, dieses Mal als Chancen:
+
+```{r echo=FALSE}
+# Um den gewünschten Effekt zu zeigen, müssen wir mit posterior_epred() arbeiten
+# und die Odds-Transformation + Ratio-Rechnung  auf den einzelnen Samples machen.
+# Wir verwenden auch den Median (nicht den Mean), weil coef(modell) intern ebenfalls
+# den Median verwendet.
+ps_schaden = posterior_epred(modell, newdata=data.frame(dosis=x))
+os_schaden = odds(ps_schaden)
+os_ratio = os_schaden[, 2:6] / os_schaden[, 1:5]
+p_schaden = colMeans(ps_schaden)
+o_schaden = foreach_column(os_schaden, median)
+o_ratio = foreach_column(os_ratio, median)
+p_diff = p_schaden[2:6] - p_schaden[1:5]
+
+kable(data.frame(x, p_schaden, c("-", round(p_diff, 3)),
+                 o_schaden, c("-", round(o_ratio, 2))),
+                 col.names=c("Strahlendosis", "Wahrscheinlichkeit",
+                             "Differenz", "Chancen (odds)", "Verhältnis (odds ratio)"))
+```
+Wie wir sehen, ist das Verhältnis der Chancen, die sogenannte *odds ratio*, immer konstant. D.h. bei der logistischen Regression multiplizieren sich die Chancen mit jeder Differenz in $x$ auf. Schauen wir uns nun die Koeffizienten des Modells an:
+
+```{r echo=FALSE}
+print(modell, digits=2)
+```
+
+Eine Änderung der Dosis um +1 bewirkt also eine Änderung der logit-Werte von 0.26. Wie sollen wir das interpretieren? Die Link-Funktion der logistischen Regression (wie also $y$ für das Modell transformiert wird) ist die logarithmierte Chance (*log-odds* oder *logit*). Wie kommen wir also von $dosis=0.26$ auf das Verhältnis von 13.11? Um den Logarithmus der *log-odds* "aufzuheben" müssen wir den Koeffizienten exponenzieren $e^{0.26}=1.29$ und da wir eine Schrittweite von 10 haben (Strahlendosis erhöht sich in der Tabelle immer um 10 Einheiten) müssen wir den Faktor zehn mal mit sich selbst multiplizieren[^zehnfach] -- voila:
+
+[^zehnfach]: Alternativ 10x den Koeffizienten, dann exponenzieren, da: $e^{10 \times 0.26} = (e^{0.26})^{10} = 1.29^{10} \approx 13.1$
+
+$$
+\underbrace{1.29 \times 1.29 \times \cdots \times 1.29}_{10\text{-mal}}
+= 1.29^{10} \approx 13.11
+$$
+
+## Beispiel: Herzinfarkt-Risiko
+
+Die [Framingham Heart Study](https://www.framinghamheartstudy.org/fhs-for-researchers/data-available-overview/) erfasst seit vielen Jahren das Herzinfarkt-Risiko. Wir wollen nun ein Modell rechnen, das uns die Größe verschiedener Risikofaktoren bestimmt.
+
+```{r cache=TRUE}
+# https://www.kaggle.com/dileep070/heart-disease-prediction-using-logistic-regression/
+heart = read.csv('daten/framingham-clean.csv', stringsAsFactors = T)
+heart$herzinfarkt = as.numeric(heart$TenYearCHD) - 1
+split_random(heart, 2500, "heart_train", "heart_test")
+
+# Logistisches Regressionsmodell
+herz1 = stan_glm(herzinfarkt ~ age + sex, data=heart_train,
+                 family=binomial(link="logit"), seed=456, refresh=0)
+```
+
+Schauen wir uns als erstes wieder einen Effektplot an, um ein erstes Gefühl für das Risiko zu erhalten. Wir zeichnen zwei Linien ein, eine für Frauen (Referenzgruppe), eine für Männer.
+
+```{r echo=FALSE}
+age_seq = seq(30, 70, length.out=50)
+dat2 = expand.grid(age = age_seq, sex = levels(heart$sex))
+dat2$risiko = predict(herz1, newdata=dat2, type="response")
+par(mar=c(4,4,2.5,1))
+ggplot(dat2, aes(age, risiko, col=sex)) + geom_line() + 
+  labs(title="Herzinfarktrisiko (innerhalb von 10 Jahren)",
+       x="Alter (Jahre)", y="Risiko") +
+  theme_minimal()
+```
+Das Diagramm zeigt wieder einen nicht-linearen Zusammenhang[^kurve]: mit zunehmenden Alter nimmt das Risiko zu, einen Herzinfarkt innerhalb von zehn Jahren zu erleiden. Wir sehen auch, dass der Abstand zwischen Männer und Frauen mit dem Alter zunimmt. Die nachfolgende Tabelle gibt uns wieder einen Überblick:
+
+[^kurve]: Wir sehen dieses Mal nur den ersten Teil der S-Kurve. Sie beginnt ab ca. 110 Jahren wieder deutlich abzuflachen.
+
+```{r echo=FALSE}
+alter = c(30, 40, 50, 60 , 70)
+ps_risiko = posterior_epred(herz1, newdata=expand.grid(age=alter, sex=levels(heart$sex)))
+os_risiko = odds(ps_risiko)
+os_ratio = os_risiko[, 2:10] / os_risiko[, 1:9]
+p_risiko = foreach_column(ps_risiko, median)
+o_risiko = foreach_column(os_risiko, median)
+o_ratio = foreach_column(os_ratio, median)
+frauen = 1:5
+maenner = 6:10
+kable(data.frame(alter, p_risiko[frauen], p_risiko[maenner],
+                 o_risiko[frauen], o_risiko[maenner],
+                 c("-", round(o_ratio[1:4], 2)),
+                 c("-", round(o_ratio[6:9], 2)),
+                 round(o_risiko[maenner] / o_risiko[frauen], 2)),
+      col.names=c("Alter", "p(F)", "p(M)", 
+                  "odds(F)", "odds(M)",
+                  "ratio (F)", "ratio (M)",
+                  "ratio (M vs. F)"))
+```
+
+Wir sehen, dass sich die Chance (nicht die Wahrscheinlichkeit!) eines Herzinfarkts alle zehn Jahre mehr als verdoppelt. Auch haben Männer offensichtlich eine doppelte so hohe Chance (nicht Wahrscheinlichkeit!) als Frauen einen Herzinfarkt zu erleiden.
+
+Wie sehen die Koeffizienten des Modells aus?
+
+```{r}
+coef(herz1)
+```
+
+Der Koeffizient `sexmale` gibt den Gruppenunterschied an. Wegen der *logit*-Transformation von $y$ müssen wir in exponenzieren: $e^{0.73} \approx 2.08$ welches genau dem Chancenverhältnis (odds-ratio) zwischen Männern und Frauen entspricht. Beim Alter gehen wir ähnlich vor: $e^{0.08} \approx 1.08$; und weil wir (analog zum ersten Beispiel) beim Alter in der Tabelle immer Schritte von 10 Jahre machen, müssen wir das 10-mal multiplizieren bzw. $1.08^{10} \approx 2.16$ rechnen. Unser Modell hat nur einen einzigen Koeffizienten für das Alter, weshalb das Verhältnis (die *odds-ratio* für das Alter) für Frauen und Männer dasselbe ist -- wie auch schon in der Tabelle ersichtlich.
+
+
+# Probleme für die Berechnung der Regression
+
+Ein Problemfall entsteht für die Berechnung des Regressionsmodells, wenn beide Datengruppen **vollständig separiert** sind (Wertebereiche überschneiden sich nicht), wie in folgendem Diagramm zu sehen. Welche der eingezeichneten Regressionslinien ist die richtige? Die rote? Die violette? Die blaue oder die grüne?
+
+```{r echo=FALSE, fig.height=3}
+set.seed(42)
+dose.ok = rbeta(100, 3, 25)*80
+dose.harm = rbeta(100, 25, 3)*80
+df_separated = data.frame(dosis=c(dose.ok, dose.harm),
+                 schaden=c(rep(0,100),rep(1,100)))
+par(mar=c(2,4,3,1))
+plot(df_separated$dosis, df_separated$schaden,
+     main="Welche Linie ist die richtige?", xlab="", ylab="Beschädigt (0/1)",
+     pch=16, col=rgb(0,0,0, 0.1), cex=1.5)
+x = seq(0, 80, 0.1)
+y = exp(.27*x-10.5)/(1+exp(.27*x-10.5))
+lines(x,y, col="red")
+y2 = exp(.55*x-20)/(1+exp(.55*x-20))
+lines(x,y2, col="blue")
+y3 = exp(.4*x-17)/(1+exp(.4*x-17))
+lines(x,y3, col="darkgreen")
+y4 = exp(1.25*x-50)/(1+exp(1.25*x-50))
+lines(x,y4, col="purple")
+```
+
+Wir haben im Übergangsbereich (Dosis 30..50) keine Werte an denen sich die Regression orientieren könnte. Dementsprechend unklar ist, welche Form die Regressionslinie annehmen soll: flacher Übergang, so wie die rote Linie, oder steiler Übergang so wie die violette Linie?
+
+Während eine Modellberechnung mit klassischen Verfahren in einem solchen Fall fehlschlägt, werden dank der Priors beim Bayes-Verfahren die Parameter auf sinnvolle Werte eingeschränkt:
+
+```{r cache=TRUE}
+modell2 = stan_glm(schaden ~ dosis, data=df_separated, family=binomial(link="logit"),
+                   seed=456, refresh=0)
+coef(modell2)
+se(modell2) # Standardfehler
+```
+
+Analog ergibt sich eine Anforderung für kategorische unabhängige Variable (z.B. Geschlecht, Gruppe, Beruf): sind in einer der Kategorien nicht ausreichend Werte enthalten (Empfehlungen reichen von min. 10-30), dann beginnt die logistische Regression instabil zu werden bzw. der Standardfehler zuzunehmen; die Koeffizienten können dann nicht mehr genau oder gar nicht mehr bestimmt werden.
+
+## Weitere Anforderungen
+
+Die Anforderungen bzw. Voraussetzungen für eine logistische Regression ähneln sich ansonsten der linearen Regression:
+
+   1. Die abhängige Variable darf nur zwei Werte, nämlich 0 oder 1 annehmen
+   2. Die unabhängigen Variablen müssen eine Varianz aufweisen.
+   3. Beobachtungen (Messwerte) der abhängigen Variable sind unabhängig voneinander.
+   4. Falls mehrere unabhängige Variable in der Regressionsgleichung enthalten sind, dürfen diese sich nicht gegenseitig linear berechnen lassen (engl. *multicollinearity*).
+   5. Der *Logit-Wert* der Wahrscheinlichkeit $P(y=1)$ muss durch eine lineare Kombination der Modellterme beschrieben werden können.
+
+# Testen des Modells
+
+Es gibt einige Tests, welche messen, ob das logistische Regressionsmodell erfolgreich war bzw. für das Datenset überhaupt angemessen ist. Wir greifen hier exemplarisch zwei einfach zu rechnende Tests heraus, die statistische Literatur hält ein reichhaltiges Arsenal an weiteren Tests bereit.
+
+## Ist logit() die passende Funktion?
+
+Ein Test (basierend auf einer Idee von Hinkley (1985) bzw. Tukey (1949)) prüft, ob die Logit-Funktion passend für unser Modell ist bzw. ob wir wesentliche Variablen vergessen haben. Er beruht auf der einfachen Idee, mit den vorhergesagten Werten des Modells eine neue Regression anzusetzen. Zudem wird noch das Quadrat der Werte aufgenommen. Wir erwarten, dass das Quadrat nicht signifikant ist (sonst deutet das auf fehlende Variable, logit() als unpassende Funktion oder andere Probleme im Modell hin).
+
+```{r}
+# hinkley() macht Folgendes:
+# y_hat = predict(modell)
+# y2_hat = y_hat^2
+# modell_test = glm(modell$y ~ y_hat + y2_hat, family = binomial(link = "logit"))
+
+hinkley(modell)
+```
+
+> Hinweis: der Koeffizient für die *fitted values* selbst ($\hat{y}$ bzw. `y_hat`) muss nicht notwendigerweise signifikant sein. Zwar würde man das erwarten (schließlich ist `y_hat` die Vorhersage des Modells) aber $\hat{y}$ und $\hat{y}^2$ können eine starke Korrelation aufweisen weshalb der Koeffizient für $\hat{y}$ nicht signifikant sein kann.
+
+Diese Bedingung ist bei unserem Strahlendosis-Beispiel erfüllt. Falls der Test fehlschlägt haben wir aber leider keinen Hinweis darauf, warum.
+
+## Einflussreiche Beobachtungen und LOO-Diagnostik
+
+Auch in einer logistischen Regression kann es einflussreiche Beobachtungen geben. Das sind Punkte, welche beispielsweise eine 0-Antwort haben, aber weit von anderen 0-Antworten entfernt sind und mitten im typischen 1-Antwort-Wertebereich liegen (und umgekehrt). Wir können über den Umweg der `loo()`-Funktion auf einflussreiche Werte testen. Wenn alle "Pareto k estimates" kleiner 0.7 sind, liegen keine einflussreichen Werte vor[^loo]:
+
+[^loo]: Genauer: Große Werte können auf Beobachtungen hinweisen, deren Weglassen das Modell stark verändert. Niedrige Werte beweisen aber nicht, dass keine Ausreißer vorliegen. Pareto-k ist in erster Linie ein Diagnosemaß für die Zuverlässigkeit der Importance-Sampling-Approximation bei PSIS-LOO -- kein Diagnosetool für Ausreißer, obwohl sich das häufig deckt.
+
+```{r}
+mloo = loo(modell, save_psis = TRUE)
+mloo
+```
+
+In unserem Datenset befindet sich (laut diesem Test) kein Outlier. Wir können uns auch einen detaillierten Plot für anzeigen lassen. Werte kleiner 0.7 sind gut, 0.7 bis 1 ist eine Grauzone und größer 1 bedeutet Handlungsbedarf. Hier ist alles ok.
+
+```{r}
+plotpkiv(mloo)
+```
+
+# Modellgüte
+
+Bisher haben wir untersucht, wie die logistische Regression funktioniert, wie wir die Ergebnisse interpretieren und unter welchen Voraussetzungen wir ihr vertrauen können. Aber: Wie gut ist unser Modell eigentlich? Und woran erkennen wir, ob ein anderes Modell besser wäre? Drei Fragen dienen uns als Orientierung:
+
+* Wie gut passt das Modell zu den beobachteten Daten?
+* Wie genau sind seine vorhergesagten Wahrscheinlichkeiten?
+* Wie gut kann das Modell zwischen den beiden Gruppen unterscheiden?
+
+Für den Vergleich verwenden wir zwei Herzinfarkt-Modelle:
+
+```{r echo=FALSE, cache=TRUE}
+herz2 = stan_glm(herzinfarkt ~ age + BMI + sex + diabetes + cigarettes + hypertension,
+                 data=heart_train, family=binomial, seed=678, refresh=0)
+```
+```{r}
+formula(herz1) # unser ursprüngliches Modell
+formula(herz2) # mehr Variablen
+```
+
+## Modellvergleich und Vorhersageleistung
+
+Bei der Linearen-Regression haben wir für den Fit Maßzahlen wie $R^2$, AIC etc. verwendet. Auch für die logistische Regression gibt es ein Pseudo-$R^2$, das wir berechnen können. Besser ist es jedoch auf den ELPD Wert von LOO zurückzugreifen.
+
+```{r cache=TRUE}
+r2_m1 = bayes_R2(herz1)
+r2_m2 = bayes_R2(herz2)
+```
+```{r echo=FALSE}
+par(mfrow=c(1,2))
+plothist(r2_m1, main="R² (herz1)")
+plothist(r2_m2, main="R² (herz2)")
+```
+
+Mit einem $R^2 < 0.1$ sind beide Modelle nicht sonderlich berauschend.
+
+```{r cache=TRUE}
+loo1 = loo(herz1)
+loo2 = loo(herz2)
+loo_compare(loo1, loo2)
+```
+
+Wir sehen, dass zwischen beiden Modellen nur ein geringer Unterschied ist, wobei die ELPD-Differenz von `loo_compare()` zeigt, dass das zweite Modell die Nase (knapp) vorne hat.
+
+## Genauigkeit
+
+Die zweite Frage ist, wie genau sind die vorhergesagten Wahrscheinlichkeiten des Modells. Wir schauen uns dazu den Brier-Score an: er misst die Abweichung der vorhergesagten Wahrscheinlichkeiten zu den echten Antworten. Je kleiner also der Score ist, desto besser das Modell, $Brier=0$ wären perfekte Vorhersagen. Die `daatools` haben eine entsprechende Funktion:
+
+```{r}
+b1 = brier(herz1)
+b2 = brier(herz2)
+```
+
+\newpage
+
+```{r echo=FALSE}
+kable(cbind(b1, b2), col.names=c("herz1", "herz2"))
+```
+
+Ist $Brier=0.12$ (Modell 1) bzw. $Brier=0.117$ (Modell 2) nun gut oder schlecht? Wir sehen, dass uns die Funktion auch einen Wert für das sogenannte Nullmodell ausgibt. Das Nullmodell sagt einfach den Mittelwert der Wahrscheinlichkeit vorher, ist also ein sehr einfaches Modell. Beispiel: Bei einem Datensatz mit 500 Zeilen, von denen 100x der positive (=1) Fall vorkommt, ist der Mittelwert $\frac 1 5$ und das Nullmodell würde immer 20% Wahrscheinlichkeit vorhersagen. In unserem Fall hat das Nullmodell einen Wert von $Brier=0.129$. Nicht allzu weit entfernt. Es scheint also, als würde das Modell nicht viel erklären.
+
+Wir könnten noch einen *Skill*-Wert berechnen: $BSS = 1 - \frac{Brier_{Modell}}{Brier_{Nullmodell}}$. Der ist positiv, wenn das Modell besser als das Nullmodell ist und wir maximal 1. Bei uns ergäbe das einen Skill-Score von ca. 0.06 für Modell 1 und ca. 0.09 für Modell 2. Auch das keine berauschenden Werte.
+
+Wie sieht es mit der Genauigkeit auf einen neuen Test-Datensatz aus?
+
+```{r}
+b1n = brier(herz1, newdata = heart_test)
+b2n = brier(herz2, newdata = heart_test)
+```
+```{r echo=FALSE}
+kable(cbind(b1n, b2n), col.names=c("herz1", "herz2"))
+```
+
+Wir sehen, dass auf dem vorhergesagten Datensatz -- mit Werten von 0.123 (Modell 1) bzw. 0.118 (Modell 2) -- der Brier-Score leicht schlechter ist. Das ist aber zu erwarten. Gut ist, dass sich der Score nicht deutlich verschlechtert hat.
+
+In Summe, da die Verbesserung gegenüber dem Null-Modell so gering ist, attestieren wir unserem Modell keine gute Genauigkeit. Dieser Befund stimmt also mit dem Pseudo-$R^2$ aus dem vorhergehenden Schritt überein. 
+
+### Kalibrierung der vorhergesagten Wahrscheinlichkeiten
+
+Der Brier-Score gibt uns also eine Maßzahl für die Qualität der vorhergesagten Wahrscheinlichkeiten. Wir können auch grafisch überprüfen, ob unser Modell die Wahrscheinlichkeiten richtig einschätzt. Dazu verwenden wir einen sogenannten Kalibrierungsplot:
+
+```{r, message=FALSE, results='hide'}
+pred_heart = predict(herz2, newdata=heart_test, type="response")
+rms::val.prob(pred_heart, heart_test$herzinfarkt, statloc=FALSE)
+```
+
+Auf der X-Achse sehen wir die vom Modell vorhergesagte Wahrscheinlichkeit, auf der Y-Achse die tatsächlich beobachtete Häufigkeit. Wenn unser Modell beispielsweise für eine Gruppe von Personen ein Herzinfarktrisiko von 20 % vorhersagt, sollten ungefähr 20 % dieser Personen tatsächlich einen Herzinfarkt erleiden.
+
+Die hellgraue Diagonale (Ideal) zeigt uns eine perfekte Kalibrierung. Die Kurve *Nonparametric* (gestrichelt) schätzt den tatsächlichen Zusammenhang aus unseren Daten, ohne eine bestimmte Kurvenform vorzugeben. Die *Logistic calibration* (durchgezogene Linie) verwendet dagegen eine logistische Funktion, um diesen Zusammenhang zu beschreiben.
+
+Je näher die Kurven an der Diagonale liegen, desto besser sind unsere vorhergesagten Wahrscheinlichkeiten kalibriert. Liegt eine Kurve unterhalb der Diagonale, überschätzt unser Modell das Risiko; liegt sie oberhalb, unterschätzt es das Risiko.
+
+Wichtig ist, dass wir hier die Testdaten verwenden: Wir wollen schließlich wissen, wie gut unser Modell Wahrscheinlichkeiten für neue, bisher unbekannte Personen vorhersagt. Insbesondere in Bereichen mit wenigen Beobachtungen können die Kalibrierungskurven allerdings recht unsicher sein.
+
+## Unterscheidung zwischen Gruppen
+
+Selbst wenn unser Modell keine gute Vorhersage der (absoluten) Wahrscheinlichkeit liefert, könnte es immer noch so sein, dass es gut in der Lage ist zwischen negativen und positiven Antworten zu unterscheiden (zu diskriminieren). Denn wenn bspw. die negativen Fälle (also kein Herzinfarkt) überwiegend mit einer Wahrscheinlichkeit <10% und die positiven Fälle überwiegend im Bereich 20..30% vorhergesagt würden, dann könnten wir die Gruppen ja sauber trennen.
+
+Ein hilfreiches Diagramm ist die *Receiver Operating Characteristic* (ROC-Kurve):
+
+```{r echo=FALSE}
+# Wir zeigen die ROC des Test-Datensatzes: ist aussagekräftiger
+ROC(herz2, newdata = heart_test)
+```
+
+Die Fläche unter der Kurve stellt ein Maß für die Diskriminierungsfähigkeit unseres Modells dar: je größer die Fläche unter der Kurve, desto besser ist das Modell. Der Wert *AUC* (area under curve; Wertebereich 0..1) gibt uns eine Maßzahl dafür. AUC = 0.73 bedeutet, dass das Modell bei einem zufällig ausgewählten Paar aus einer Person mit und einer ohne Herzinfarkt mit 73 % Wahrscheinlichkeit der Person mit Herzinfarkt die höhere Risikoprognose zuordnet. Zum Vergleich: Modell 1 hat $AUC=0.7$.
+
+Wie entsteht diese Kurve? Wie eingangs erwähnt, geht es um Diskriminierung zwischen den beiden Gruppen. Wenn wir also Vorhersagen bzw. Entscheidungen auf Basis der Regression treffen wollen, müssen wir einen **Schwellwert** festlegen, ab dem wir das Ergebnis dem 0- bzw. 1-Fall zuschlagen. Typischerweise wird dazu der Wert 0.5 verwendet: $p \ge 0.5$ wird als $y=1$ interpretiert, $p < 0.5$ wird als $y=0$ interpretiert. Aber je nach Modell und Aufgabenstellung, kann ein anderer Schwellenwert besser sein.
+
+Auf dieser Basis können wir auch eine einfache Tabelle erstellen, wie gut unser Modell die Gruppen trennt (kritisch/unauffällig ist die Vorhersage unseres Modells, Infarkt/Gesund der tatsächliche Wert im Datenset). Die Tabelle zeigt die Ergebnisse für die Schwellwerte 0.1, 0.25, 0.5 und 0.7 für den Testdatensatz^[Testdaten sind in diesem Zusammenhang aussagekräftiger als Trainingsdaten]:
+
+```{r echo=FALSE}
+.confusion = function(y, y_hat, threshold) {
+  infarkt_kritisch = sum(y==1 & y_hat >= threshold)
+  infarkt_sicher = sum(y==1 & y_hat < threshold)
+  gesund_kritisch = sum(y==0 & y_hat >= threshold)
+  gesund_sicher = sum(y==0 & y_hat < threshold)
+  matrix(c(infarkt_kritisch, infarkt_sicher, gesund_kritisch, gesund_sicher),
+         nrow=2, byrow = TRUE,
+         dimnames = list(c("Infarkt","Gesund"), c("kritisch","unauffällig")))
+}
+
+y_hat = predict(herz2, newdata=heart_test, type="response")
+threshold10 = .confusion(heart_test$herzinfarkt, y_hat, 0.10)
+threshold25 = .confusion(heart_test$herzinfarkt, y_hat, 0.25)
+threshold50 = .confusion(heart_test$herzinfarkt, y_hat, 0.50)
+threshold70 = .confusion(heart_test$herzinfarkt, y_hat, 0.70)
+thresholds = cbind(threshold10, threshold25, threshold50, threshold70)
+kable(thresholds) |>
+  kableExtra::add_header_above(
+    c(" "=1, "Schwellwert=0.1" = 2, "Schwellwert=0.25" = 2,
+             "Schwellwert=0.5" = 2, "Schwellwert=0.7" = 2))
+```
+
+Die erste Zeile (Infarkt) zeigt uns die Verteilung für Personen, die tatsächlich einen Herzinfarkt erlitten haben. Bei einem Schwellwert von 0.1 weisen wir die Modellvorhersagen ebenfalls 152x einem Infarkt zu, 26x sagen wir den Infarkt nicht vorher ("sicher"). Je höher der Schwellwert, desto weniger echte Infarkte sagen wir vorher, bis wir letztlich keinen Infarkt mehr richtig vorhersagen.
+
+Analog zeigt uns die zweite Zeile (Gesund) die Verteilung für Personen, die in Wirklichkeit keinen Herzinfarkt hatten. Bei einem Schwellwert von 0.1 weisen wir noch 572x fälschlicherweise einen Herzinfarkt aus ("kritisch"), 406x ordnen wir richtigerweise keinen Infarkt zu. Je höher der Schwellwert, desto besser unsere Vorhersage, bis wir letztlich alle Gesunden als gesund vorhersagen.
+
+Wir können das auch als Diagramme für alle Schwellwerte aufzeichnen. Ist der Schwellwert klein sagen wir alle echten Infarkte richtig vorher ("Infarkt/kritisch"). Leider sagen wir dann auch alle gesunden Personen als Infarkte vorher ("Gesund/kritisch"). Je höher der Schwellwert, desto besser unsere Vorhersage der Gesunden ("Gesund/sicher"), weil bei hohem Schwellwert letztlich alle Vorhersagen unterhalb liegen und als gesund vorhergesagt werden. Leider trifft das dann auch auf die echten Infarkte zu: auch dort sagen wir vorher, dass sie gesund bleiben ("Infarkt/sicher"). Wie wir erkennen können, sind die Diagramme auf der linken Seite komplementär zu den Diagrammen der rechten Seite: das ist nur logisch, denn es gilt immer $\text{Infarkt}_{kritisch} + \text{Infarkt}_{sicher} = \text{Infarkt}_{gesamt}$ und $\text{Gesund}_{kritisch} + \text{Gesund}_{sicher} = \text{Gesund}_{gesamt}$.
+
+```{r echo=FALSE}
+lr = logistic_rates(herz2, newdata=heart_test)
+pos_sum = sum(heart_test$herzinfarkt)
+neg_sum = sum(1 - heart_test$herzinfarkt)
+groups = c("Infarkt/kritisch", "Infarkt/unauffällig", "Gesund/kritisch", "Gesund/unauffällig")
+rates = data.frame(
+  Schwellwert = lr$cutoff,
+  Anzahl = c(
+    lr$true.positive.rate * pos_sum,
+    lr$false.negative.rate * pos_sum,
+    lr$false.positive.rate * neg_sum,
+    lr$true.negative.rate * neg_sum
+  ),
+  Typ = factor(rep(groups, each=nrow(lr)), levels = groups))
+ggplot(rates, aes(Schwellwert, Anzahl, color=Typ)) + geom_line() + 
+  facet_wrap(~Typ, scales="free_y") +
+  theme_minimal() + theme(legend.position="none")
+```
+
+Wir sehen also, dass bei der Wahl eines Schwellwerts immer ein Trade-off vorhanden ist: Nämlich ob wir die Risikopatient\*innen richtig vorhersagen wollen oder ob wir möglichst die Gesunden richtig vorhersagen wollen. Je besser unser Modell, umso besser gelingt uns diese Trennung. Wenn wir uns nun nochmal die ROC-Kurve von oben ansehen, dann sehen wir, dass die *true positive rate* (TPR, Sensitivität), die Y-Achse, unseren Infarkt/kritisch-Werten entspricht (normiert auf den Bereich 0..1); die *false positive rate* (FPR, Komplement zur Spezifität), die X-Achse, entspricht unseren Gesund/kritisch-Werten (ebenfalls normiert auf den Bereich 0..1). Die ROC kombiniert also Schwellwert (über Farben) und Qualität der Diskriminierung unseres Modells per TPR und FPR.
+
+### Beispiel: Schulerfolg in Portugal
+
+Am Beispiel eines Datensatzes zu Schulerfolg von Cortez & Silva (2008) wollen wir uns eine weitere ROC-Kurve ansehen. Es handelt sich um einen Datensatz von 649 Schüler\*innen, von denen 549 die Abschlussprüfung geschafft haben, 100 leider nicht^[Wir verwenden bei diesem Beispiel die Trainingsdaten, nicht die Testdaten für die Analyse, weil wir keinen Train-/Test-Split durchführen. Im Allgemeinen ist es besser, diese Analysen auf den Testdaten durchzuführen, es sei denn, man will das Modell nur beschreiben, nicht bewerten.]
+
+```{r cache=TRUE}
+# https://archive.ics.uci.edu/dataset/320/student+performance
+school = read.csv("daten/student-por.csv", sep=";", stringsAsFactors = TRUE)
+# Y=Fehlversuch, damit ähnlich wie bei Herzinfarkt, der "böse" Fall gleich 1 ist.
+school$failed = ifelse(school$G3 < 10, 1, 0)
+fehlversuch = stan_glm(failed ~ school + failures + higher + absences + guardian + age,
+                       data=school, family=binomial, seed=1234, refresh=0)
+```
+
+Wir verwenden wieder "kritisch & sicher" für die Modellvorhersagen und für die realen Ergebnisse im Datensatz verwenden wir "Fehlversuch & Erfolg". Unten sehen wir wieder die vier Diagramme und die ROC. Mit einer $AUC=0.85$ ist das Modell recht brauchbar: in 85% aller Fälle weist es dem Fehlversuch in einem Erfolg-&Fehlversuch-Paar die höhere Wahrscheinlichkeit für einen Fehlversuch zu.
+
+Wir haben einen Punkt eingezeichnet, als Lesebeispiel: wenn 0.42 TPR gefordert ist (Modell sagt richtigerweise 42 von 100 Fehlschläge als kritisch vorher [rote Linie]), dann ergibt das ca. 0.05 FPR (Modell sagt falsch 25 von 549 Erfolge als kritisch vorher [blaue Linie]). Die Farbe entspricht dem Schwellwert (Cutoff) von ca. 0.42 [grüne Linie].
+
+```{r echo=FALSE}
+s_lr = logistic_rates(fehlversuch)
+s_groups = c("Fehlversuch/kritisch", "Fehlversuch/sicher", "Erfolg/kritisch", "Erfolg/sicher")
+s_pos_sum = sum(school$failed)
+s_neg_sum = sum(1 - school$failed)
+s_rates = data.frame(
+  Schwellwert = s_lr$cutoff,
+  Anzahl = c(
+    s_lr$true.positive.rate * s_pos_sum,
+    s_lr$false.negative.rate * s_pos_sum,
+    s_lr$false.positive.rate * s_neg_sum,
+    s_lr$true.negative.rate * s_neg_sum
+  ),
+  Typ = factor(rep(s_groups, each=nrow(s_lr)), levels = s_groups))
+ggplot(s_rates, aes(Schwellwert, Anzahl, color=Typ)) + geom_line() + 
+  facet_wrap(~Typ, scales="free_y") +
+  geom_vline(data=data.frame(x=0.412, Typ=c("Fehlversuch/kritisch", "Erfolg/kritisch")),
+             aes(xintercept=x), color="green4", linetype = 2, linewidth = 0.3) +
+  geom_hline(data=data.frame(y=0.42*s_pos_sum, Typ="Fehlversuch/kritisch"),
+             aes(yintercept=y), color="red2", linetype = 2, linewidth = 0.3) +
+  geom_hline(data=data.frame(y=0.051*s_neg_sum, Typ="Erfolg/kritisch"),
+             aes(yintercept=y), color="blue2", linetype = 2, linewidth = 0.3) +
+  theme_minimal() + theme(legend.position="none")
+```
+
+```{r echo=FALSE}
+ROC(fehlversuch)
+abline(v=0.051, col="blue2", lty = 2)
+abline(h=0.42, col="red2", lty = 2)
+```
+
+Genaue Zahlen können mit der Funktion `logistic_rates()` berechnet werden:
+
+```{r}
+logrates = logistic_rates(fehlversuch)
+logrates[sum(logrates$true.positive.rate <= 0.42)+(-1:1),1:3]
+```
+
+Der Vollständigkeit halber: das Modell hat ein $R^2=0.29$ und einen Brier-Score von 0.097 (Nullmodell: 0.13). Der Hinkley-Test ist negativ → da müssten wir genauer nachsehen, warum.
+
+
+# Zusammenfassung
+
+Das *Generalized Linear Model* erweitert die Möglichkeiten der Regression: binäre abhängige Variable mit der logistischen Regression und Zählvariablen (z.B. Anzahl der Goldmedaillen bei der Olympiade) mit der Poisson-Regression sind zwei typische Regressionen die mit dem GLM gerechnet werden können. Beide Regressionsarten gehören zum Standard-Repertoire der Statistik und sind vielfältig einsetzbar.
+
+Dennoch: wenn Sie die Wahl haben, eine metrische Variable zu erfassen, dann sollten Sie dieser Variante den Vorzug geben. Wenn Sie nämlich eine metrische Variable auf eine binäre Entscheidung reduzieren, gehen Informationen verloren. Am Schulerfolg-Beispiel: besser die Punkteanzahl bei der Abschlussprüfung vorhersagen, als auf die Entscheidung Bestanden ja/nein mit logistischer Regression zu reduzieren.
+
+---------
+
+\newpage
+
+# Anhang: logit
+
+Die Wahrscheinlichkeit deckt einen Wertebereich von 0..100% ab. Die Chancen (odds) decken dagegen einen Wertebereich von *0..+Inf* ab. Beispiel: eine Wahrscheinlichkeit von 99.999% entspricht einer Chance von 99999:1. Nimmt man nun den Logarithmus der Chance, den "Log-Odds" oder **Logit**, ist der Wertebereich *-Inf..+Inf*.
+
+$$logit(y) = log \left( \frac{p(y)}{1 - p(y)} \right)$$
+
+Beispiel: ein $p(y) = 0.333$ entspricht einem $odds(y) = 1 / 2$ und einem $logit(y) = -0.69$; ein $p(y) = 0.8$ entspricht einem $odds(y) = 4 / 1$ und einem $logit(y) = 1.39$.
+
+Die Logit-Funktion hat zwei wesentliche Eigenschaften: (1) sie hat bei $p(y)=0.5$ ihren Nullpunkt und (2) $logit(y) = -logit(1-y)$, d.h. die Funktion ist symmetrisch. Die folgenden Diagramme veranschaulichen nochmal die Zusammenhänge:
+
+```{r echo=FALSE, fig.height=5}
+par(mfrow=c(2,2), mar=c(4,4,3,2))
+p.y = seq(0.01, 0.99, length.out = 100)
+
+plot(p.y, p.y, type="l", col="darkblue",
+     main="Lineares Modell", ylab="p(y)", xlab="p(y)")
+
+plot(p.y/(1-p.y), p.y, type="l", col="darkblue",
+     main="Odds / (Wett-)Chance", ylab="p(y)", xlab=expression(frac(p(y), 1-p(y))))
+arrows(80,0.2,97,0.2, length=0.1)
+text(87,0.27, "+Inf")
+
+plot(log(p.y/(1-p.y)), p.y, type="l", col="darkblue",
+     xaxt="n",
+     main="Logit / log(odds)", ylab="p(y)", xlab=expression(log(frac(p(y), 1-p(y)))))
+axis(1, c(-4, -2, 0, 2, 4), labels = c(-4, -2, "", 2, 4))
+abline(v=0, lty=2)
+abline(h=0.5, lty=2)
+arrows(2.5,0.2,4.1,0.2, length=0.1)
+text(3.1,0.27, "+Inf")
+arrows(-2.5,0.8,-4.1,0.8, length=0.1)
+text(-3.1,0.87, "-Inf")
+
+par(mar=c(0,2,0,0))
+plot(NA, NA, main="", xlim=c(0,1), ylim=c(0,1), axes=FALSE)
+text(0, 0.8, "p(y) ... Wahrscheinlichkeit (in %), dass y=1", adj=c(0,0))
+text(0, 0.55, expression(odds(y) == frac(p(y), 1 - p(y))), adj=c(0,0))
+text(0.6, 0.55, "[0..+Inf]", adj=c(0,-1.5))
+text(0, 0.3, expression(logit(y) == log(frac(p(y), 1 - p(y)))), adj=c(0,0))
+text(0.6, 0.3, "[-Inf..+Inf]", adj=c(0,-1.5))
+```
+
+Wie aus dem dritten Diagramm ersichtlich, ist die Logit-Funktion nicht linear: eine Änderung um 1 auf der X-Achse hat nicht überall dieselbe Änderung auf der Y-Achse zur Folge. Zum Beispiel bei einer Änderung von $x=-0.5$ auf $x=0.5$ ist $\Delta_{p(y)} \approx 0.25$, aber bei einer Änderung von $x=3$ auf $x=4$ ist $\Delta_{p(y)} \approx 0.03$.

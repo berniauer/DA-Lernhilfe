@@ -1,0 +1,635 @@
+# Stack Overflow: Tabs, Spaces und Jahresgehalt
+
+# Datensatz und Fragestellung
+# ===========================
+#
+# StackOverflow-survey.csv enthält einen Auszug aus einer weltweiten
+# Stack-Overflow-Umfrage mit 6543 Personen aus 18 Ländern. Die Datei
+# enthält nur Vollzeitbeschäftigte. Jede Zeile beschreibt eine Person.
+# Die Angaben stammen aus Selbstauskünften und werden zunächst unverändert
+# eingelesen.
+# 
+# **Variablen**
+# 
+# - `Country`: Land der befragten Person.
+# - `YearsProgram`: Programmiererfahrung in Jahresintervallen
+# - `TabSpaces`: angegebene Einrückungspraxis: Tabs, Spaces oder Both
+# - `CompanySize`: Anzahl der Beschäftigten des Unternehmens
+# - `LearningNewTech`: Zustimmung zur Bedeutung des Erlernens neuer Technologien
+# - `StackOverflowCopiedCode`: berichtete Häufigkeit des Kopierens von Code von Stack Overflow.
+# - `Salary`: angegebenes Jahresgehalt in US-Dollar, nicht Monatsgehalt!
+# - `Lang.*`: zwölf Indikatoren für verwendete Programmiersprachen; 1 steht
+#           für verwendet, 0 für nicht verwendet. Mehrfachnennungen sind möglich.
+# 
+# **Hinweis**
+# 
+# Im Skript entstehen zusätzlich LogSalary (Logarithmus des Jahresgehalts),
+# Erfahrung und Firmengroesse (metrische Näherungen der Kategorien) sowie
+# Erfahrung20plus (Indikator für die offene Oberkategorie).
+
+# **Aufgabe**
+#
+# Untersuchen Sie mit den Rechenschritten, ob ein Zusammenhang zwischen
+# Einrückungspraxis und Gehalt besteht. Begründen Sie Ihre Antworten anhand
+# der Ausgaben und Diagramme. Trennen Sie Beobachtung, Interpretation und
+# Beurteilung; nennen Sie bei Zahlen jeweils Skala und Vergleichsgruppe.
+
+
+# 1. Vorbereitung
+# ===============
+
+library(dplyr)
+library(ggplot2)
+library(rstanarm)
+library(bayesplot)
+library(daatools)
+
+set.seed(2026)
+theme_set(theme_minimal())
+
+
+
+# 2. Daten laden und sichten
+# ==========================
+#
+# **Leitfragen**
+# 
+# - Welche Datentypen, Häufigkeiten oder Wertebereiche fallen Ihnen auf?
+# - Wie beurteilen Sie die Gehaltsangaben und ihre Darstellung auf den
+#   beiden Skalen? Welche Angaben würden Sie näher prüfen?
+
+# Arbeitsverzeichnis: Ordner mit CSV-Datei
+roh = read.csv("StackOverflow-survey.csv", stringsAsFactors = FALSE, na.strings = c("", "NA"))
+colnames(roh)
+dim(roh)
+str(roh)
+info(roh)
+
+# **Gehalt näher ansehen**
+
+quantile(roh$Salary, c(0, .01, .05, .25, .5, .75, .95, .99, 1))
+head(roh[order(roh$Salary), c("Country", "Salary", "TabSpaces")], 15)
+
+plothist(roh$Salary, main = "Jahresgehalt [USD]")
+# nur Bereich >1000 USD anzeigen
+plothist(roh$Salary, main = "Jahresgehalt (logarithmiert)",
+         transform = log10, xlim=c(3, 6))
+
+
+
+# 3. Daten aufbereiten
+# ====================
+#
+# **Leitfragen**
+# 
+# - Welche Zeilen werden aus welchen Gründen ausgeschlossen, und wie
+#   verändern sich dadurch Umfang und Zusammensetzung der Stichprobe?
+# - Welche Annahmen stecken in den Referenzgruppen, der Gehaltsuntergrenze
+#   und der metrischen Umrechnung der Kategorien? Beurteilen Sie diese.
+
+# Führen Sie einfach alle Umwandlungen bis "Umwandlungen-Ende" aus.
+
+daten0 = roh
+# Unbekannt als NA setzen
+daten0$CompanySize[daten0$CompanySize %in% c("I don't know", "I prefer not to answer")] = NA
+
+# Faktoren erzeugen
+daten0$LearningNewTech = factor(daten0$LearningNewTech)
+daten0$StackOverflowCopiedCode = factor(daten0$StackOverflowCopiedCode)
+
+# Faktoren in passende Reihenfolge bringen
+jahre_stufen = c("Less than a year", paste(1:19, "to", 2:20, "years"),
+                 "20 or more years")
+daten0$YearsProgram = factor(daten0$YearsProgram, levels = jahre_stufen)
+
+firma_stufen = c("Fewer than 10 employees", "10 to 19 employees",
+                 "20 to 99 employees", "100 to 499 employees",
+                 "500 to 999 employees", "1,000 to 4,999 employees",
+                 "5,000 to 9,999 employees", "10,000 or more employees")
+daten0$CompanySize = factor(daten0$CompanySize, levels = firma_stufen)
+daten0$TabSpaces = factor(daten0$TabSpaces, levels = c("Tabs", "Spaces", "Both"))
+
+# Referenzgruppen manuell setzen
+daten0$YearsProgram = relevel(daten0$YearsProgram, ref = "20 or more years")
+daten0$CompanySize = relevel(daten0$CompanySize, ref = "20 to 99 employees")
+daten0$Country = relevel(factor(daten0$Country), ref = "United States")
+daten0$StackOverflowCopiedCode = relevel(daten0$StackOverflowCopiedCode, ref = "Once or twice")
+
+# Erfahrung auch als Zahl statt Faktor
+daten0$Erfahrung = c(0.5, seq(1.5, 19.5, 1), 20)[
+  match(daten0$YearsProgram, jahre_stufen)]
+# Eigener Indikator, ob Erfahrung größer 20 Jahre (0/1)
+daten0$Erfahrung20plus = as.integer(daten0$YearsProgram == "20 or more years")
+# Auch Firmengröße als Zahl statt Faktor
+daten0$Firmengroesse = c(5, 14.5, 59.5, 299.5, 749.5, 2999.5, 7499.5, 15000)[
+  match(daten0$CompanySize, firma_stufen)]
+
+# einige Hilfsvariablen
+sprachen = names(roh)[startsWith(names(roh), "Lang.")]
+# Umwandlungen-Ende
+
+# **Basis-Datensatz: nur vollständige mit positivem Salary**
+vollstaendig = complete.cases(daten0)
+positiv = is.finite(daten0$Salary) & daten0$Salary > 0
+basis = droplevels(daten0[vollstaendig & positiv, ])
+basis$LogSalary = log(basis$Salary)
+
+# **Datensatz: Mindestgehalt: 5000 USD/Jahr**
+untergrenze = 5000
+daten = droplevels(basis[basis$Salary >= untergrenze, ])
+daten$LogSalary = log(daten$Salary)
+
+# **Übersicht**
+print(data.frame(
+  Schritt = c("Eingelesen", "Vollständige Angaben", "Zusätzlich Salary > 0",
+              "Zusätzlich Salary >= 5000"),
+  Anzahl = c(nrow(roh), sum(vollstaendig), nrow(basis), nrow(daten))))
+
+# **per Land: Gehalt kleiner Untergrenze?**
+with(daten0, table(Country, Salary < untergrenze))
+
+# **per Einrückung: Gehalt kleiner Untergrenze?**
+with(daten0, table(TabSpaces, Salary < untergrenze))
+
+# **Einrückung per Land**
+with(daten, table(Country, TabSpaces))
+
+# **Einrückung je Erfahrung**
+with(daten, table(YearsProgram, TabSpaces))
+
+
+
+# 4. Beschreibende Auswertung
+# ===========================
+#
+# **Leitfragen**
+# 
+# - Welche Gehaltsunterschiede zeigen die Gruppenvergleiche insgesamt
+#   und innerhalb der Länder?
+# - Welche Aussagen lassen diese Vergleiche zur Fragestellung bereits zu,
+#   und welche Fragen bleiben offen?
+
+daten |> group_by(TabSpaces) |>
+  summarise(n = n(), Mittelwert = mean(Salary), Median = median(Salary),
+            Q25 = quantile(Salary, .25), Q75 = quantile(Salary, .75))
+
+# **Wo haben wir wie viele Daten? (in Prozent)**
+round(prop.table(with(daten, table(TabSpaces, Country)), margin = 1), 3)*100
+
+# **Gehalt als Boxplots**
+gplot(daten, aes(TabSpaces, Salary)) + geom_boxplot() +
+  labs(x = "Einrückung", y = "Jahresgehalt [USD]")
+
+ggplot(daten, aes(TabSpaces, Salary)) + geom_boxplot() +
+  scale_y_log10() +
+  facet_wrap(~ Country, ncol = 5) +
+  labs(x = "Einrückung", y = "Jahresgehalt [USD, logarithmisch]")
+
+ggplot(daten, aes(Erfahrung, LogSalary)) +
+  geom_point(alpha = .1, position = position_jitter(width = .15, height = 0)) +
+  geom_smooth(method = "loess", formula = y ~ x) +
+  facet_wrap(~ TabSpaces) +
+  labs(x = "Programmiererfahrung [Näherung, Jahre]", y = "log(Jahresgehalt / USD)")
+
+
+
+# 5. Trainings- und Testdaten
+# ===========================
+#
+# **Leitfragen**
+# 
+# - Wozu werden die Daten aufgeteilt, und welche Größen haben die Teilmengen?
+# - Welche Folgen hätte eine unterschiedliche Gruppenanzahl?
+
+split_random(daten, 5000, "training", "test", seed = 2026)
+c(Training = nrow(training), Test = nrow(test))
+
+# **Haben die Train- und Testdaten die selben Gruppen?**
+
+for (variable in c("Country", "YearsProgram", "CompanySize", "LearningNewTech",
+                   "StackOverflowCopiedCode", "TabSpaces")) {
+  cat(variable, ": ")
+  group_diff = setdiff(unique(as.character(test[[variable]])),
+                       unique(as.character(training[[variable]])))
+  cat(ifelse(length(group_diff) > 0, group_diff, "Keine Differenz\n"))
+}
+
+
+
+# 6. Modell 1
+# ===========
+#
+# **Leitfragen**
+# 
+# - Was bedeuten Intercept, TabSpaces-Koeffizienten und sigma in diesem Modell?
+# - Welche Annahmen über das Gehalt verwendet das Modell?
+# - War Sampling ok? Wie beurteilen Sie die Berechnung anhand von Rhat, n_eff, MCSE,
+#   Traceplots?
+# - Was sagt die Prüfung von mean_PPD aus, und welche Aussagen über die
+#   Eignung eines Modells sind durch gutes Sampling allein nicht gedeckt?
+
+modell1 = stan_glm(Salary ~ TabSpaces, data = training, seed=2026, refresh=0)
+
+check_sampling(modell1)
+mcmc_trace(modell1, pars = c("TabSpacesSpaces", "sigma"))
+
+modell1
+
+
+
+# 7. Modell 2
+# ===========
+# 
+# **Leitfragen**
+# 
+# - Wie unterscheidet sich die Bedeutung der Koeffizienten von Modell 1,
+#   und wie erhalten Sie einen prozentuellen Gruppenunterschied?
+# - Welche Folgen hat die Transformation für die Verteilungsannahme und
+#   die Interpretation der Gehaltsvorhersagen?
+
+modell2 = stan_glm(LogSalary ~ TabSpaces, data = training, seed = 2026, refresh = 0)
+
+check_sampling(modell2)
+mcmc_trace(modell2, pars = c("TabSpacesSpaces", "sigma"))
+
+print(modell2, digits = 3)
+round(exp(coef(modell2)), 2)
+
+# Hilfsfunktion: umrechnen in Prozent
+to_percent = function(x) (exp(x) - 1)*100
+
+plotcoef(modell2, "TabSpaces", transform = to_percent)
+
+
+
+# 8. Modell 3
+# ===========
+# 
+# **Leitfragen**
+# 
+# - Wie ist der Spaces-Koeffizient unter Berücksichtigung der zusätzlichen
+#   Variablen zu interpretieren?
+# - Wie verändert sich die Schätzung gegenüber Modell 2, und wie erklären
+#   und beurteilen Sie diese Veränderung?
+
+modell3 = stan_glm(LogSalary ~ TabSpaces + Country + YearsProgram, 
+                   data = training, seed = 2026, refresh = 0)
+
+check_sampling(modell3)
+mcmc_trace(modell3, pars = c("TabSpacesSpaces", "sigma"))
+
+print(modell3, digits = 3)
+round(exp(coef(modell3)[1:3]), 2)
+
+plotcoef(modell3, "TabSpaces", transform = to_percent)
+print(compare_coef(modell2, modell3, transform = to_percent, include="TabSpaces"))
+
+
+
+# 9. Modell 4
+# ===========
+# 
+# **Leitfragen**
+# 
+# - Wie verändert sich der geschätzte Zusammenhang gegenüber Modell 3,
+#   und welche Grenzen hat seine Interpretation?
+
+modell4 = stan_glm(
+  LogSalary ~ TabSpaces + Country + YearsProgram + CompanySize +
+    LearningNewTech + StackOverflowCopiedCode +
+    Lang.JavaScript + Lang.Java + Lang.PHP + Lang.CSharp + Lang.Python + Lang.R +
+    Lang.Cpp + Lang.VBNet + Lang.Ruby + Lang.Perl + Lang.ObjectiveC + Lang.C,
+  data = training, seed = 2026, refresh = 0)
+check_sampling(modell4)
+mcmc_trace(modell4, pars = c("TabSpacesSpaces", "sigma"))
+
+print(modell4, digits = 3)
+round(exp(coef(modell4)[1:3]), 2)
+plotcoef(modell4, "TabSpaces", transform = to_percent)
+
+print(compare_coef(modell2, modell3, modell4, transform = to_percent, include="TabSpaces"))
+
+
+
+# 10. Modell 5
+# ============ 
+# 
+# **Leitfragen**
+# 
+# - Welche Zusammenhänge unterstellt das Modell durch log1p(Erfahrung),
+#   Erfahrung20plus und log2(Firmengroesse)?
+# - Welche Vor- und Nachteile hat diese Kodierung gegenüber Modell 4,
+#   insbesondere bei offenen Kategorien?
+
+modell5 = stan_glm(
+  LogSalary ~ TabSpaces + Country + log1p(Erfahrung) + Erfahrung20plus +
+    log2(Firmengroesse) + LearningNewTech + StackOverflowCopiedCode +
+    Lang.JavaScript + Lang.Java + Lang.PHP + Lang.CSharp + Lang.Python + Lang.R +
+    Lang.Cpp + Lang.VBNet + Lang.Ruby + Lang.Perl + Lang.ObjectiveC + Lang.C,
+  data = training, seed = 2026, refresh = 0)
+
+check_sampling(modell5)
+mcmc_trace(modell5, pars = c("TabSpacesSpaces", "sigma"))
+
+print(modell5, digits = 3)
+round(exp(coef(modell5)[1:3]), 2)
+plotcoef(modell5, "TabSpaces", transform = to_percent)
+
+print(compare_coef(modell4, modell5, transform = to_percent, include="TabSpaces"))
+
+
+
+# 11. Modelldiagnostik
+# ====================
+# 
+# **Leitfragen**
+# 
+# - Welche Eigenschaften der Daten reproduzieren die einzelnen Modelle
+#   laut Dichte-, Kennzahlen- und Vorhersageplots?
+# - Welche Muster zeigen die Residuen insgesamt sowie nach Erfahrung und
+#   Land? Wie beurteilen Sie damit die Modellannahmen?
+
+par(mfrow=c(2,3))
+diagnose_density(modell1, main="Modell 1")
+diagnose_density(modell2, main="Modell 2")
+diagnose_density(modell3, main="Modell 3")
+diagnose_density(modell4, main="Modell 4")
+diagnose_density(modell5, main="Modell 5")
+reset_gfx()
+
+diagnose_fit(modell1)
+diagnose_fit(modell2)
+diagnose_fit(modell3)
+diagnose_fit(modell4)
+diagnose_fit(modell5)
+
+par(mfrow=c(2,3))
+diagnose_y_vs_yhat(modell1, samples = FALSE, main = "Modell 1")
+diagnose_y_vs_yhat(modell2, samples = FALSE, main = "Modell 2")
+diagnose_y_vs_yhat(modell3, samples = FALSE, main = "Modell 3")
+diagnose_y_vs_yhat(modell4, samples = FALSE, main = "Modell 4")
+diagnose_y_vs_yhat(modell5, samples = FALSE, main = "Modell 5")
+reset_gfx()
+
+par(mfrow=c(2,3))
+diagnose_residual(modell1, samples = FALSE, main = "Modell 1")
+diagnose_residual(modell2, samples = FALSE, main = "Modell 2")
+diagnose_residual(modell3, samples = FALSE, main = "Modell 3")
+diagnose_residual(modell4, samples = FALSE, main = "Modell 4")
+diagnose_residual(modell5, samples = FALSE, main = "Modell 5")
+reset_gfx()
+
+# **Residuen nach Programmiererfahrung**
+#
+# Residuen nach anderen Variablen sortieren
+residuen4 = training$LogSalary - colMeans(posterior_epred(modell4))
+residuen5 = training$LogSalary - colMeans(posterior_epred(modell5))
+residuen = rbind(
+  data.frame(training, Residuum = residuen4, Modell = "M4"),
+  data.frame(training, Residuum = residuen5, Modell = "M5"))
+
+ggplot(residuen, aes(Erfahrung, Residuum, colour = Modell)) +
+  geom_point(color="black", alpha=0.1) + facet_wrap(~Modell) +
+  geom_smooth(method = "loess", formula = y ~ x) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  labs(x = "Programmiererfahrung [Näherung, Jahre]")
+
+# **Residuen nach Land**
+ggplot(residuen, aes(Country, Residuum)) + geom_boxplot() +
+  facet_wrap(~ Modell) + coord_flip() + labs(x = "Land")
+  
+
+  
+# 12. Modellkennzahlen
+# ====================
+# 
+# **Leitfragen**
+# 
+# - Welche R²-, RMSE- und MAE-Werte dürfen Sie direkt miteinander vergleichen,
+#   und welche Bedeutung haben die jeweiligen Skalen?
+# - Wie beurteilen Sie die Modelle anhand der Trainings- und Testkennzahlen?
+#   Welche Hinweise erhalten Sie zur Generalisierung und zur Modellwahl?
+
+modelle = list(M1 = modell1, M2 = modell2, M3 = modell3,
+               M4 = modell4, M5 = modell5)
+
+r2 = data.frame()
+for (name in names(modelle)) {
+  r2 = rbind(r2, data.frame(Modell = name, Median = median(bayes_R2(modelle[[name]]))))
+}
+r2
+
+prediction_metrics(modell1, newdata=test)
+prediction_metrics(modell2, newdata=test)
+prediction_metrics(modell3, newdata=test)
+prediction_metrics(modell4, newdata=test)
+prediction_metrics(modell5, newdata=test)
+
+# **LOO**
+
+mloo = list()
+for (name in names(modelle)) {
+  mloo[[name]] = loo(modelle[[name]])
+}
+
+plotpkiv(mloo[["M1"]])
+plotpkiv(mloo[["M2"]])
+plotpkiv(mloo[["M3"]])
+plotpkiv(mloo[["M4"]])
+plotpkiv(mloo[["M5"]])
+
+# Ohne Modell 1, da anderes Y in Modell
+loo_compare(mloo[-1])
+
+
+
+# 13. Vorhersagen in USD
+# ======================
+#
+# **Leitfragen**
+# 
+# - Wie bewerten Sie die Modelle auf der gemeinsamen USD-Skala, und was
+#   bedeuten die Fehlergrößen für Vorhersagen einzelner Gehälter?
+
+metriken_usd = data.frame()
+for (name in names(modelle)) {
+  modell = modelle[[name]]
+  mu = posterior_epred(modell, newdata = test)
+  if (name == "M1") {
+    vorhersage = colMeans(mu)
+  } else {
+    sigma = as.matrix(modell)[, "sigma"]
+    # Ein bloßes exp(mu) wäre der bedingte Median, nicht der arithmetische Erwartungswert.
+    vorhersage = colMeans(exp(sweep(mu, 1, sigma^2 / 2, "+")))
+  }
+  metriken_usd = rbind(metriken_usd, data.frame(
+    Modell = name, RMSE_USD = sqrt(mean((test$Salary - vorhersage)^2)),
+    MAE_USD = mean(abs(test$Salary - vorhersage))))
+}
+metriken_usd
+
+
+
+# 14. Diagnostik mit Testdaten
+# ============================
+# 
+# **Leitfragen**
+# 
+# - Welche Gemeinsamkeiten und Unterschiede zeigen die Diagnosen für
+#   Trainings- und Testdaten?
+# - Welche Schlussfolgerungen ziehen Sie daraus für die Verwendbarkeit
+#   der Modelle bei weiteren Personen?
+
+# **Original vs. Test**
+
+diagnose_density(modell4, main = "M4: Trainingsdaten")
+diagnose_density(modell4, newdata = test, main = "M4: Testdaten")
+diagnose_residual(modell4, samples = FALSE, main = "M4: Trainingsdaten")
+diagnose_residual(modell4, newdata = test, samples = FALSE, main = "M4: Testdaten")
+
+diagnose_density(modell5, main = "M5: Trainingsdaten")
+diagnose_density(modell5, newdata = test, main = "M5: Testdaten")
+diagnose_residual(modell5, samples = FALSE, main = "M5: Trainingsdaten")
+diagnose_residual(modell5, newdata = test, samples = FALSE, main = "M5: Testdaten")
+
+
+
+# 15. Modell mit allen Analysedaten
+# =================================
+# 
+# **Leitfragen**
+# 
+# - Welchen Zweck erfüllt die erneute Berechnung mit allen Analysedaten,
+#   und wie ist die vorherige Testauswertung danach einzuordnen?
+# - Wie beurteilen Sie die replizierten USD-Kennzahlen im Vergleich zu
+#   den beobachteten Werten und zur Auswahl der Analysedaten?
+
+modell_final = update(modell4, data = daten, seed = 2028, refresh = 0)
+
+print(modell_final, digits = 3)
+round(exp(coef(modell_final)[1:3]), 2)
+print(compare_coef(modell4, modell_final, include="TabSpaces", transform=to_percent))
+
+check_sampling(modell_final)
+diagnose_density(modell_final, main = "Gesamte Analysedaten")
+diagnose_fit(modell_final)
+diagnose_residual(modell_final, samples = FALSE)
+
+modell_metrisch = update(modell5, data = daten, seed = 2028, refresh = 0)
+
+print(modell_metrisch, digits = 3)
+round(exp(coef(modell_metrisch)[1:3]), 2)
+print(compare_coef(modell5, modell_metrisch, include="TabSpaces", transform=to_percent))
+
+check_sampling(modell_metrisch)
+diagnose_density(modell_metrisch, main = "Gesamte Analysedaten")
+diagnose_fit(modell_metrisch)
+diagnose_residual(modell_metrisch, samples = FALSE)
+
+# **R² und LOO**
+
+print(c(R2_modell_final = mean(bayes_R2(modell_final)),
+        R2_modell_metrisch = mean(bayes_R2(modell_metrisch))))
+
+loo_final = loo(modell_final)
+plotpkiv(loo_final)
+
+loo_metrisch = loo(modell_metrisch)
+plotpkiv(loo_metrisch)
+
+loo_compare(loo_final, loo_metrisch)
+
+# Ergänzung: replizierte Kennzahlen in USD
+yrep_usd = exp(posterior_predict(modell_final, draws = 500, seed = 2030))
+pruefung_usd = rbind(
+  Minimum =  quantile(apply(yrep_usd, 1, min), c(.025, .5, .975)),
+  Mittelwert = quantile(rowMeans(yrep_usd), c(.025, .5, .975)),
+  Maximum = quantile(apply(yrep_usd, 1, max), c(.025, .5, .975)))
+print(cbind(Beobachtet = c(min(daten$Salary), mean(daten$Salary), max(daten$Salary)), pruefung_usd))
+
+
+
+# 16. Posterior-Auswertung
+# ========================
+# 
+# **Leitfragen**
+# 
+# - Wie beantworten Sie die Gehaltsfrage anhand der posterioren Schätzungen,
+#   HDIs und Wahrscheinlichkeiten für die verschiedenen Gruppenvergleiche?
+
+samples = as.matrix(modell_final)
+beta_spaces = samples[, "TabSpacesSpaces"]
+beta_both = samples[, "TabSpacesBoth"]
+
+prozent_spaces = 100 * (exp(beta_spaces) - 1)
+prozent_both = 100 * (exp(beta_both) - 1)
+prozent_diff_spaces_both = 100 * (exp(beta_spaces - beta_both) - 1)
+
+plothist(prozent_spaces, main = "Spaces gegenüber Tabs [%]")
+plothist(prozent_both, compVal = 0, main = "Both gegenüber Tabs [%]")
+plothist(prozent_diff_spaces_both, main = "Spaces gegenüber Both [%]")
+
+vergleich = data.frame()
+for (name in c("M2", "M3", "M4", "M5")) {
+  effekt = 100 * (exp(as.matrix(modelle[[name]])[, "TabSpacesSpaces"]) - 1)
+  intervall = hdi(effekt)
+  vergleich = rbind(vergleich, data.frame(
+    Modell = name, Median = median(effekt),
+    Untergrenze = intervall[1], Obergrenze = intervall[2]))
+}
+print(vergleich, digits=3)
+
+
+
+# 17. Weitere Gehaltsgrenzen
+# ==========================
+# 
+# **Leitfragen**
+# 
+# - Wie verändern sich Stichprobe, Schätzung und Unsicherheit zwischen
+#   den Varianten, und wie stabil ist Ihre Antwort auf die Fragestellung?
+# - Welche Bereinigungs- und Modellierungsentscheidungen würden Sie vertreten,
+#   und welche Grenzen dieser Sensitivitätsprüfung bleiben bestehen?
+
+# **Unterschiedliche Grenzen für Gehalt**
+
+daten_positiv = basis
+daten_10000 = droplevels(basis[basis$Salary >= 10000, ])
+daten_20000 = droplevels(basis[basis$Salary >= 20000, ])
+# daten_alle_5000 enthält auch unbekannte Firmengrößen (die bisher ausgeschlossen wurden)
+daten_alle_5000 = roh |> filter(Salary >= 5000) |> mutate(LogSalary = log(Salary))
+
+# **Modelle**
+
+modell_positiv = update(modell_final, data = daten_positiv, seed = 2029, refresh = 0)
+modell_10000 = update(modell_final, data = daten_10000, seed = 2029, refresh = 0)
+modell_20000 = update(modell_final, data = daten_20000, seed = 2029, refresh = 0)
+modell_alle_5000 = update(modell_final, data = daten_alle_5000, seed = 2029, refresh = 0)
+
+# **Varianten durchrechnen**
+
+varianten = list(Positiv = modell_positiv, Ab_5000 = modell_final,
+                 Ab_10000 = modell_10000, Ab_20000 = modell_20000,
+                 Metrisch_ab_5000 = modell_metrisch,
+                 Alle_ab_5000 = modell_alle_5000)
+sensitivitaet = data.frame()
+for (name in names(varianten)) {
+  modell = varianten[[name]]
+  effekt = 100 * (exp(as.matrix(modell)[, "TabSpacesSpaces"]) - 1)
+  intervall = hdi(effekt)
+  sensitivitaet = rbind(sensitivitaet, data.frame(
+    Variante = name, n = nobs(modell), Median = median(effekt),
+    Untergrenze = intervall[1], Obergrenze = intervall[2]))
+}
+print(sensitivitaet, digits=3)
+
+
+
+# 18. Resümee
+# ===========
+# 
+# **Leitfragen**
+# 
+# - Wie lautet Ihr abschließendes, begründetes Fazit zum Zusammenhang
+#   zwischen Einrückung und Gehalt, einschließlich Unsicherheit, Modellgrenzen
+#   und möglicher kausaler Interpretation?

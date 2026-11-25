@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fix the AI – Regression Release Review</title>
+<style>
+:root{
+  --bg:#0b1020; --panel:#121a2d; --panel2:#18233a; --text:#eef3ff; --muted:#aab6cf;
+  --line:#2a3858; --accent:#78a6ff; --good:#71d39a; --bad:#ff8181; --warn:#ffd27a;
+  --blue:#78a6ff; --green:#75d2a2; --red:#ff8585; --violet:#b59cff;
+  --radius:16px; --shadow:0 12px 35px rgba(0,0,0,.22);
+}
+*{box-sizing:border-box}
+body{margin:0;background:linear-gradient(180deg,#09101d 0,#0b1020 38%,#0e1424 100%);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,sans-serif;min-height:100vh}
+button,input,select{font:inherit}
+button{cursor:pointer}
+button:focus-visible,input:focus-visible{outline:3px solid rgba(120,166,255,.55);outline-offset:2px}
+.app{max-width:1120px;margin:0 auto;padding:24px 18px 48px}
+.topbar{display:grid;grid-template-columns:1fr auto;gap:18px;align-items:end;margin-bottom:18px}
+.brand small{display:block;color:var(--accent);font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+.brand h1{margin:.1rem 0 .25rem;font-size:clamp(1.8rem,4vw,3rem);line-height:1.05}.brand p{margin:0;color:var(--muted)}
+.scorebox{display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap}.pill{border:1px solid var(--line);background:rgba(18,26,45,.85);padding:8px 11px;border-radius:999px;color:var(--muted);font-size:.92rem}.pill strong{color:var(--text)}
+.progress{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin:14px 0 24px}.progress span{height:7px;border-radius:999px;background:#24314e;transition:.25s}.progress span.done{background:var(--good)}.progress span.active{background:var(--accent);box-shadow:0 0 0 3px rgba(120,166,255,.12)}
+.layout{display:grid;grid-template-columns:245px minmax(0,1fr);gap:18px}.side,.card{border:1px solid var(--line);background:rgba(18,26,45,.92);border-radius:var(--radius);box-shadow:var(--shadow)}
+.side{padding:14px;align-self:start;position:sticky;top:12px}.side h2{font-size:.82rem;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;margin:4px 4px 10px}.mission-list{list-style:none;margin:0;padding:0;display:grid;gap:6px}.mission-list li{padding:9px 10px;border-radius:10px;color:#8190ad;font-size:.9rem;border:1px solid transparent}.mission-list li.active{color:var(--text);background:#1b2945;border-color:#39527f}.mission-list li.done{color:#a9e4bf}.mission-list li.done::before{content:"✓ ";color:var(--good);font-weight:800}
+.main{min-width:0}.card{padding:clamp(18px,3vw,30px)}.eyebrow{color:var(--accent);font-size:.8rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase}.card h2{margin:.25rem 0 .5rem;font-size:clamp(1.4rem,3vw,2rem)}.lead{color:var(--muted);margin-top:0;max-width:72ch}
+.model{background:#0b1324;border:1px solid #2b3b5d;border-radius:13px;padding:15px 16px;margin:18px 0;font:600 1.05rem/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;overflow:auto;color:#dce8ff}.model .a{color:#9cc0ff}.model .b{color:#8ce0b1}.model .c{color:#ffb0b0}
+.ai{border-left:4px solid var(--violet);background:#171b31;padding:14px 16px;border-radius:11px;margin:18px 0}.ai strong{display:block;color:#cfc2ff;margin-bottom:4px}.ai p{margin:0}
+.question{margin-top:18px}.question h3{font-size:1rem;margin:0 0 10px}.options{display:grid;gap:9px}.option{width:100%;text-align:left;border:1px solid #35476d;background:#141e33;color:var(--text);padding:12px 14px;border-radius:11px;transition:.15s}.option:hover{background:#1a2945;border-color:#5875ad}.option.correct{border-color:var(--good);background:rgba(113,211,154,.11)}.option.wrong{border-color:var(--bad);background:rgba(255,129,129,.09)}.option:disabled{cursor:default;opacity:.95}
+.feedback{margin-top:13px;padding:12px 14px;border-radius:11px;display:none}.feedback.show{display:block}.feedback.good{background:rgba(113,211,154,.12);border:1px solid rgba(113,211,154,.5)}.feedback.bad{background:rgba(255,129,129,.10);border:1px solid rgba(255,129,129,.45)}.feedback strong{display:block;margin-bottom:3px}
+.actions{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap}.primary,.secondary{border-radius:10px;padding:10px 14px;border:1px solid transparent;font-weight:750}.primary{background:var(--accent);color:#071225}.primary:disabled{opacity:.35;cursor:not-allowed}.secondary{background:transparent;border-color:#3a4c70;color:var(--text)}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.metric{border:1px solid var(--line);background:#10182a;border-radius:12px;padding:13px}.metric span{display:block;color:var(--muted);font-size:.8rem}.metric strong{display:block;font-size:1.3rem;margin-top:2px}.metric.good strong{color:var(--good)}.metric.warn strong{color:var(--warn)}
+.visual{border:1px solid var(--line);background:#0d1526;border-radius:13px;padding:10px;margin:16px 0}.visual svg{display:block;width:100%;height:auto}.legend{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:.82rem;padding:4px 7px 0}.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px}
+.controlrow{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;margin:14px 0}.controlrow input[type=range]{width:100%;accent-color:var(--accent)}.toggle{display:flex;gap:8px;align-items:center;color:var(--muted)}.prediction{font-size:1.8rem;font-weight:800;color:var(--accent)}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;margin:14px 0}table{border-collapse:collapse;width:100%;min-width:560px}th,td{padding:10px 12px;border-bottom:1px solid #273654;text-align:right}th:first-child,td:first-child{text-align:left}th{color:var(--muted);font-size:.82rem;background:#111b30}tr:last-child td{border-bottom:0}.badcell{color:var(--bad);font-weight:700}.goodcell{color:var(--good);font-weight:700}
+.lock{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:9px;background:#23314f;color:#90a0bd;margin-right:7px;font-weight:900}.lock.open{background:rgba(113,211,154,.16);color:var(--good);border:1px solid rgba(113,211,154,.35)}
+.intro{max-width:860px;margin:20px auto}.intro .card{padding:clamp(22px,5vw,44px)}.brief{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:20px 0}.brief div{border:1px solid var(--line);border-radius:12px;padding:13px;background:#10182a}.brief strong{display:block;font-size:1.25rem}.brief span{color:var(--muted);font-size:.86rem}
+.final-checks{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:18px 0}.checkcard{padding:13px;border-radius:12px;border:1px solid var(--line);background:#10182a}.checkcard b{display:block}.pass{color:var(--good)}.fail{color:var(--bad)}.mixed{color:var(--warn)}
+.report{display:none;margin-top:20px;padding:18px;border-radius:13px;border:1px solid rgba(113,211,154,.5);background:rgba(113,211,154,.08)}.report.show{display:block}.report h3{margin-top:0}.report ul{margin-bottom:0}.footer-note{color:#73819b;font-size:.78rem;margin-top:18px}
+@media(max-width:760px){.layout{grid-template-columns:1fr}.side{position:static}.mission-list{grid-template-columns:repeat(2,1fr)}.topbar{grid-template-columns:1fr}.scorebox{justify-content:flex-start}.brief,.grid2,.final-checks{grid-template-columns:1fr}.progress{gap:4px}.controlrow{grid-template-columns:1fr}.card{padding:18px}.mission-list li{font-size:.82rem;padding:7px}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <section id="intro" class="intro">
+    <div class="card">
+      <div class="eyebrow">Regression Release Review</div>
+      <h1 style="margin:.2rem 0 .5rem;font-size:clamp(2rem,6vw,4rem);line-height:1">FIX THE AI</h1>
+      <p class="lead">Eine Analyse-KI will ein Modell zur Vorhersage von Lieferzeiten automatisch freigeben. Deine Aufgabe: prüfe ihre Aussagen, öffne acht Review-Locks und entscheide am Ende, ob das Modell eingesetzt werden darf.</p>
+      <div class="ai"><strong>AI // RELEASE BOT</strong><p>„Train-R² = 0,68. Modell ist gut. Deployment empfohlen.“</p></div>
+      <div class="brief">
+        <div><strong>8 Locks</strong><span>Interpretation bis Generalisierung</span></div>
+        <div><strong>1 Modell</strong><span>derselbe Fall über das ganze Spiel</span></div>
+        <div><strong>~15–25 min</strong><span>keine Formelsammlung notwendig</span></div>
+      </div>
+      <p><b>Modell:</b> Lieferzeit in Minuten für einen Essens-Lieferdienst. Erklärvariablen sind Distanz und Regen.</p>
+      <div class="actions"><button class="primary" id="startBtn">Review starten</button></div>
+    </div>
+  </section>
+
+  <section id="game" hidden>
+    <div class="topbar">
+      <div class="brand"><small>FIX THE AI</small><h1>Release Review</h1><p id="statusLine">Lock 1 von 8</p></div>
+      <div class="scorebox"><div class="pill">Punkte <strong id="score">0</strong></div><div class="pill">Fehlversuche <strong id="mistakes">0</strong></div></div>
+    </div>
+    <div class="progress" id="progress" aria-label="Fortschritt"></div>
+    <div class="layout">
+      <aside class="side"><h2>Review Locks</h2><ol class="mission-list" id="missionList"></ol></aside>
+      <main class="main"><section class="card" id="missionCard" aria-live="polite"></section></main>
+    </div>
+  </section>
+</div>
+<script>
+(() => {
+  const root = document.getElementById('app');
+  if (root.dataset.ready) return; root.dataset.ready='1';
+  const missions = [
+    {title:'Basisfall', eyebrow:'LOCK 01 // INTERCEPT', render:()=>`
+      <h2>Was bedeutet der Intercept?</h2>
+      <p class="lead">Die KI hat die Distanz vor dem Modellieren um 3 km zentriert. <code>Regen=Nein</code> ist die Referenzgruppe.</p>
+      ${modelBox()}
+      <div class="ai"><strong>AI</strong><p>„Der Intercept 18,0 bedeutet: Eine Lieferung über 0 km dauert 18 Minuten.“</p></div>
+      ${question('Welche Interpretation ist korrekt?',[
+        ['Eine Lieferung über 0 km dauert im Mittel 18 Minuten.',0],
+        ['Eine 3-km-Lieferung ohne Regen dauert laut Modell im Mittel 18 Minuten.',1],
+        ['Eine 3-km-Lieferung dauert immer exakt 18 Minuten.',0],
+        ['18 Minuten ist der durchschnittliche Fehler des Modells.',0]
+      ],'Der Intercept ist der Basisfall: Distanz−3 = 0 und Referenzgruppe Regen=Nein. Zentrierung macht diesen Basisfall inhaltlich sinnvoll.')}`},
+
+    {title:'Koeffizient & Gruppe', eyebrow:'LOCK 02 // COEFFICIENTS', render:()=>`
+      <h2>Was sagt der Regen-Koeffizient?</h2>
+      ${modelBox()}
+      <div class="ai"><strong>AI</strong><p>„Bei Regen dauert jede Lieferung 5,8 Minuten länger.“</p></div>
+      ${question('Welche Aussage darfst du aus dem Modell ableiten?',[
+        ['Regen verursacht exakt 5,8 Minuten zusätzliche Lieferzeit.',0],
+        ['Bei gleicher Distanz liegt die erwartete Lieferzeit bei Regen im Modell um 5,8 Minuten höher als ohne Regen.',1],
+        ['5,8 Minuten ist die Lieferzeit der Regen-Gruppe.',0],
+        ['Der Unterschied gilt nur bei exakt 3 km.',0]
+      ],'Gruppenkoeffizienten sind Differenzen zur Referenzgruppe, bei ansonsten gleichen Modellvariablen. Eine kausale Aussage folgt daraus nicht automatisch.')}`},
+
+    {title:'Vorhersage', eyebrow:'LOCK 03 // PREDICTION', render:()=>`
+      <h2>Eine Vorhersage ist kein Liefertermin</h2>
+      <p class="lead">Teste das Modell. Die Punktvorhersage ist der erwartete Wert; einzelne Lieferungen streuen zusätzlich um diesen Wert.</p>
+      ${modelBox()}
+      <div class="visual">
+        <div class="controlrow"><label>Distanz: <b><span id="distVal">5.0</span> km</b><input id="dist" type="range" min="1" max="8" step="0.5" value="5"></label><label class="toggle"><input id="rain" type="checkbox" checked> Regen</label></div>
+        <div>Modellvorhersage: <span class="prediction" id="predVal">32,8 min</span></div>
+        <div style="color:var(--muted);margin-top:6px">Für 5 km + Regen: erwarteter Mittelwert ≈ 32,8 min; 95%-Intervall für eine einzelne Lieferung grob 18–47 min.</div>
+      </div>
+      <div class="ai"><strong>AI</strong><p>„Dem Kunden können wir 32,8 Minuten als praktisch sicheren Lieferzeitpunkt anzeigen.“</p></div>
+      ${question('Warum ist die Aussage problematisch?',[
+        ['Weil man aus einem linearen Modell nie Vorhersagen machen darf.',0],
+        ['Weil 32,8 der erwartete Wert ist; für einen Einzelfall kommt die Streuung des Fehlerterms hinzu.',1],
+        ['Weil bei Regen keine lineare Regression möglich ist.',0],
+        ['Weil der Intercept nicht Null ist.',0]
+      ],'Für den erwarteten Mittelwert reicht die Unsicherheit der Koeffizienten; für einen neuen Einzelfall muss zusätzlich der Fehlerterm berücksichtigt werden. Genau deshalb ist ein posterior_predict-Intervall deutlich breiter als ein posterior_epred-Intervall.')}` , after:()=>bindPrediction()},
+
+    {title:'R²', eyebrow:'LOCK 04 // R-SQUARED', render:()=>`
+      <h2>68 % korrekt?</h2>
+      <div class="grid2"><div class="metric"><span>Train R²</span><strong>0,68</strong></div><div class="metric"><span>Train MAE</span><strong>5,4 min</strong></div></div>
+      <div class="ai"><strong>AI</strong><p>„R² = 0,68. Also sind 68 % der Lieferungen korrekt vorhergesagt.“</p></div>
+      ${question('Dein Review?',[
+        ['Freigeben — R² ist genau der Anteil korrekter Einzelvorhersagen.',0],
+        ['Stoppen — R² beschreibt erklärte Variation, nicht den Anteil korrekt vorhergesagter Fälle.',1],
+        ['Stoppen — R² muss für ein brauchbares Modell immer mindestens 0,90 sein.',0],
+        ['Freigeben — bei R² > 0,5 sind Residualchecks unnötig.',0]
+      ],'R² ist keine Trefferquote. Ein hoher Wert ersetzt weder die Betrachtung der Vorhersagefehler noch die Modellchecks.')}`},
+
+    {title:'Sampling', eyebrow:'LOCK 05 // SAMPLING', render:()=>`
+      <h2>Hat die Berechnung funktioniert?</h2>
+      <p class="lead">Bevor du das Modell interpretierst, muss das MCMC-Sampling plausibel sein.</p>
+      <div class="grid2">
+        <div class="metric good"><span>max. Rhat</span><strong>1,01</strong></div>
+        <div class="metric good"><span>min. n_eff (von 4000)</span><strong>2 460</strong></div>
+        <div class="metric good"><span>max. MCSE / MAD</span><strong>2,4 %</strong></div>
+        <div class="metric"><span>Chains</span><strong>4</strong></div>
+      </div>
+      <div class="visual">${traceSvg()}</div>
+      <div class="ai"><strong>AI</strong><p>„Rhat ist nicht exakt 1,000. Sampling fehlgeschlagen.“</p></div>
+      ${question('Sampling-Urteil?',[
+        ['Problematisch: Rhat muss mathematisch exakt 1 sein.',0],
+        ['Plausibel: Rhat liegt nahe 1, n_eff ist hoch und MCSE klein.',1],
+        ['Problematisch: n_eff darf nie kleiner als die Zahl der Samples sein.',0],
+        ['Nicht beurteilbar, solange R² unbekannt ist.',0]
+      ],'Die Diagnostik spricht hier für funktionierendes Sampling: Rhat nahe 1, hohe effektive Samplezahl und MCSE deutlich unter 5 % des MAD.')}`},
+
+    {title:'PPC', eyebrow:'LOCK 06 // POSTERIOR PREDICTIVE CHECK', render:()=>`
+      <h2>Kann das Modell die Daten reproduzieren?</h2>
+      <p class="lead">Dunkel: beobachtete Lieferzeiten. Hell: fünf posterior-prädiktive Replikationen.</p>
+      <div class="visual">${ppcSvg()}<div class="legend"><span><i class="dot" style="background:#eaf0ff"></i>beobachtet</span><span><i class="dot" style="background:#78a6ff"></i>Modell-Replikationen</span></div></div>
+      <div class="ai"><strong>AI</strong><p>„Die simulierten Kurven sind nicht identisch mit den Daten. Also fällt der PPC durch.“</p></div>
+      ${question('Wie beurteilst du den PPC?',[
+        ['Durchgefallen — jede Simulation muss exakt auf den Daten liegen.',0],
+        ['Plausibel — die Replikationen decken Form, Lage und Streuung der Daten grob ab; identisch müssen sie nicht sein.',1],
+        ['Nicht relevant — PPC braucht man nur bei schlechtem R².',0],
+        ['Bestanden — weil nur die Mittelwerte gleich sind; die Form ist egal.',0]
+      ],'Ein PPC fragt, ob das Modell Daten mit ähnlichen wesentlichen Eigenschaften erzeugen kann. Exakte Übereinstimmung wäre weder nötig noch zu erwarten.')}`},
+
+    {title:'Systematic Error', eyebrow:'LOCK 07 // RESIDUAL SCAN', render:()=>`
+      <h2>Was bleibt systematisch übrig?</h2>
+      <p class="lead">Ein global brauchbarer PPC kann trotzdem lokale Modellfehler überdecken. Prüfe deshalb Residuen gegen die vorhergesagten Werte.</p>
+      <div class="visual">${residualSvg()}<div class="actions" style="justify-content:flex-start;margin:8px 4px 2px"><button type="button" class="secondary" id="trendBtn">Trend hervorheben</button></div></div>
+      <div class="ai"><strong>AI</strong><p>„Die Residuen liegen im Mittel ungefähr bei Null. Keine systematischen Fehler.“</p></div>
+      ${question('Was ist die bessere Diagnose?',[
+        ['Passt — Mittelwert Null genügt.',0],
+        ['Problem: Die U-Form zeigt Struktur in den Residuen; ein nichtlinearer Distanz-Effekt fehlt wahrscheinlich.',1],
+        ['Problem: Residuen dürfen nie positive Werte haben.',0],
+        ['Passt — bei einem guten PPC sind Residuen automatisch zufällig.',0]
+      ],'Residuen sollen ohne erkennbares Muster um Null streuen. Die U-Form ist systematische Struktur und spricht hier gegen die rein lineare Distanzwirkung.')}` , after:()=>bindTrend()},
+
+    {title:'Train / Test', eyebrow:'LOCK 08 // GENERALIZATION', render:()=>`
+      <h2>Welches Modell gewinnt wirklich?</h2>
+      <p class="lead">Die KI hat zusätzlich ein sehr flexibles Modell B erzeugt. Die Testdaten waren beim Fit unbekannt.</p>
+      <div class="tablewrap"><table><thead><tr><th>Modell</th><th>Train R²</th><th>Test R²</th><th>Train MAE</th><th>Test MAE</th></tr></thead><tbody>
+        <tr><td>A · linear</td><td>0,68</td><td class="goodcell">0,61</td><td>5,4</td><td class="goodcell">6,3</td></tr>
+        <tr><td>B · sehr flexibel</td><td class="goodcell">0,94</td><td class="badcell">0,39</td><td class="goodcell">2,2</td><td class="badcell">9,7</td></tr>
+      </tbody></table></div>
+      <div class="ai"><strong>AI</strong><p>„Modell B gewinnt eindeutig: R² 0,94 und MAE 2,2.“</p></div>
+      ${question('Welche Entscheidung ist am sinnvollsten?',[
+        ['Modell B deployen — Trainingsdaten zeigen die beste verfügbare Performance.',0],
+        ['Modell A unverändert deployen — Testwerte sind besser, also sind alle anderen Checks egal.',0],
+        ['Modell A als Ausgangspunkt behalten, aber wegen Residualmuster gezielt überarbeiten und erneut auf unbekannten Daten testen.',1],
+        ['Beide verwerfen — Test-R² unter 0,90 bedeutet automatisch unbrauchbar.',0]
+      ],'Modell B overfittet klar. Modell A generalisiert besser, hat aber den zuvor gefundenen systematischen Fehler. Die naheliegende nächste Aktion ist eine gezielte Modellrevision und erneute Evaluation.')}`}
+  ];
+
+  const state={i:0,score:0,mistakes:0,solved:Array(missions.length).fill(false),attempted:false};
+  const intro=document.getElementById('intro'),game=document.getElementById('game'),card=document.getElementById('missionCard');
+  document.getElementById('startBtn').addEventListener('click',()=>{intro.hidden=true;game.hidden=false;render()});
+
+  function modelBox(){return `<div class="model"><span class="a">Lieferzeit</span> = 18,0 + 4,5 × (<span class="b">Distanz</span> − 3) + 5,8 × <span class="c">Regen</span> + ε<br><span style="font-size:.82em;color:#91a0bb">Regen: Nein = 0 · Ja = 1</span></div>`}
+  function question(label,opts,explanation){
+    const shuffled=seedShuffle(opts.map((x,i)=>({t:x[0],ok:x[1],k:i})),state.i+17);
+    return `<div class="question" data-explain="${esc(explanation)}"><h3>${label}</h3><div class="options">${shuffled.map(o=>`<button type="button" class="option" data-ok="${o.ok}">${o.t}</button>`).join('')}</div><div class="feedback" role="status"></div></div><div class="actions"><button type="button" class="primary next" disabled>${state.i===missions.length-1?'Zum Release-Entscheid':'Nächstes Lock'}</button></div>`
+  }
+  function render(){
+    buildNav(); buildProgress(); updateScore();
+    const m=missions[state.i]; state.attempted=false;
+    document.getElementById('statusLine').textContent=`Lock ${state.i+1} von ${missions.length}`;
+    card.innerHTML=`<div class="eyebrow">${m.eyebrow}</div>${m.render()}`;
+    card.querySelectorAll('.option').forEach(b=>b.addEventListener('click',()=>answer(b)));
+    card.querySelector('.next').addEventListener('click',next);
+    if(m.after) m.after();
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+  function answer(btn){
+    if(state.solved[state.i]) return;
+    const q=btn.closest('.question'),fb=q.querySelector('.feedback');
+    const ok=btn.dataset.ok==='1'; state.attempted=true;
+    if(ok){
+      state.solved[state.i]=true; state.score+=100;
+      q.querySelectorAll('.option').forEach(x=>x.disabled=true); btn.classList.add('correct');
+      fb.className='feedback good show'; fb.innerHTML=`<strong>Lock geöffnet.</strong>${q.dataset.explain}`;
+      card.querySelector('.next').disabled=false;
+      buildNav(); buildProgress(); updateScore();
+    }else{
+      state.mistakes++; state.score=Math.max(0,state.score-15); btn.classList.add('wrong'); btn.disabled=true;
+      fb.className='feedback bad show'; fb.innerHTML='<strong>Noch nicht.</strong>Prüfe genau, was die Aussage tatsächlich behauptet.';
+      updateScore();
+    }
+  }
+  function next(){ if(!state.solved[state.i])return; if(state.i<missions.length-1){state.i++;render()} else renderFinal() }
+  function buildNav(){
+    document.getElementById('missionList').innerHTML=missions.map((m,i)=>`<li class="${state.solved[i]?'done ':''}${i===state.i?'active':''}">${String(i+1).padStart(2,'0')} · ${m.title}</li>`).join('')
+  }
+  function buildProgress(){document.getElementById('progress').innerHTML=missions.map((_,i)=>`<span class="${state.solved[i]?'done':i===state.i?'active':''}"></span>`).join('')}
+  function updateScore(){document.getElementById('score').textContent=state.score;document.getElementById('mistakes').textContent=state.mistakes}
+
+  function renderFinal(){
+    document.getElementById('statusLine').textContent='Release-Entscheid'; buildNav(); buildProgress();
+    card.innerHTML=`
+      <div class="eyebrow">FINAL // MODEL RELEASE</div><h2>Deploy, Revise oder Reject?</h2>
+      <p class="lead">Du hast alle Locks geöffnet. Die einzelnen Prüfungen ergeben kein simples „gut/schlecht“, sondern ein gemischtes Bild.</p>
+      <div class="final-checks">
+        <div class="checkcard"><b>Sampling</b><span class="pass">PASS</span><br><small>Rhat, n_eff und MCSE unauffällig.</small></div>
+        <div class="checkcard"><b>PPC</b><span class="pass">PASS</span><br><small>Globale Verteilung wird plausibel reproduziert.</small></div>
+        <div class="checkcard"><b>Systematic Error</b><span class="fail">FAIL</span><br><small>U-Form in den Residuen.</small></div>
+        <div class="checkcard"><b>Train / Test</b><span class="mixed">CAUTION</span><br><small>Lineares Modell generalisiert besser als das flexible, verliert aber Leistung.</small></div>
+      </div>
+      <div class="ai"><strong>AI</strong><p>„Alle Berechnungen liefen. Deployment freigeben?“</p></div>
+      <div class="question" id="finalQ"><h3>Dein Release-Entscheid</h3><div class="options">
+        <button type="button" class="option" data-final="deploy">DEPLOY · unverändert einsetzen</button>
+        <button type="button" class="option" data-final="revise">REVISE · Modell gezielt überarbeiten und neu testen</button>
+        <button type="button" class="option" data-final="reject">REJECT · lineare Modellierung grundsätzlich verwerfen</button>
+      </div><div class="feedback" role="status"></div></div>
+      <div class="report" id="report"><h3>Release Report: REVISE</h3><p><b>Begründung:</b> Die Berechnung ist numerisch plausibel und der PPC unauffällig. Trotzdem zeigt die Residualdiagnostik systematische Struktur. Ein hochflexibles Ersatzmodell verbessert zwar die Trainingswerte stark, generalisiert aber schlechter.</p><ul><li>Distanzwirkung gezielt nichtlinear modellieren (z. B. moderater polynomialer Term oder Spline).</li><li>PPC und Residuen danach erneut prüfen.</li><li>Die Revision auf bislang unbekannten Testdaten vergleichen.</li><li>Erst danach über Deployment entscheiden.</li></ul><p><b>Score:</b> ${state.score} Punkte · ${state.mistakes} Fehlversuche</p></div>
+      <div class="actions"><button type="button" class="secondary" id="restart">Neu starten</button></div>
+      <p class="footer-note">Hinweis für die Lehrveranstaltung: Das Spiel bewertet nicht, ob Studierende Begriffe reproduzieren können, sondern ob sie eine plausible Analysebehauptung fachlich prüfen können.</p>`;
+    card.querySelectorAll('[data-final]').forEach(b=>b.addEventListener('click',()=>{
+      const fb=document.querySelector('#finalQ .feedback');
+      if(b.dataset.final==='revise'){
+        b.classList.add('correct');card.querySelectorAll('[data-final]').forEach(x=>x.disabled=true);fb.className='feedback good show';fb.innerHTML='<strong>Release gestoppt — richtige Entscheidung.</strong>Ein bestandener Sampling-Check und ein plausibler PPC reichen nicht, wenn systematische Fehler sichtbar sind.';document.getElementById('report').classList.add('show');
+      }else{b.classList.add('wrong');b.disabled=true;fb.className='feedback bad show';fb.innerHTML=b.dataset.final==='deploy'?'<strong>Zu früh.</strong>Das Residualmuster ist ein konkreter Hinweis auf Modellmissspezifikation.':'<strong>Zu hart.</strong>Die lineare Grundidee liefert durchaus Signal und generalisiert besser als das überflexible Modell. Das spricht für Revision, nicht für Totalverwerfung.'}
+    }));
+    document.getElementById('restart').addEventListener('click',()=>{state.i=0;state.score=0;state.mistakes=0;state.solved.fill(false);render()});
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+
+  function bindPrediction(){
+    const d=document.getElementById('dist'),r=document.getElementById('rain'),dv=document.getElementById('distVal'),pv=document.getElementById('predVal');
+    const update=()=>{const x=+d.value;const y=18+4.5*(x-3)+(r.checked?5.8:0);dv.textContent=x.toFixed(1);pv.textContent=y.toFixed(1).replace('.',',')+' min'};
+    d.addEventListener('input',update);r.addEventListener('change',update);update();
+  }
+  function bindTrend(){const b=document.getElementById('trendBtn'),p=document.getElementById('trendPath');if(!b||!p)return;b.addEventListener('click',()=>{const on=p.style.opacity==='1';p.style.opacity=on?'0':'1';b.textContent=on?'Trend hervorheben':'Trend ausblenden'})}
+
+  function traceSvg(){
+    const colors=['#78a6ff','#75d2a2','#ff8585','#b59cff'];
+    let paths='';
+    for(let c=0;c<4;c++){
+      let d='';
+      let s=(12345+c*7919)>>>0;
+      const rnd=()=>{s=(1664525*s+1013904223)>>>0;return s/4294967296};
+      const mean=36+c*2.6;
+      let y=mean+(rnd()-.5)*8;
+      const n=1000;
+      for(let i=0;i<n;i++){
+        const x=20+i*(555/(n-1));
+        const shock=(rnd()-.5)*10.5;
+        y=mean+0.72*(y-mean)+shock;
+        y=Math.max(20,Math.min(64,y));
+        d+=(i?'L':'M')+x.toFixed(2)+','+y.toFixed(2);
+      }
+      paths+=`<path d="${d}" fill="none" stroke="${colors[c]}" stroke-width="0.9" opacity=".82"/>`;
+    }
+    return `<svg viewBox="0 0 600 88" role="img" aria-label="Vier dichte MCMC-Trace-Plots ohne erkennbaren Trend"><line x1="20" y1="70" x2="575" y2="70" stroke="#425270"/><line x1="20" y1="14" x2="20" y2="70" stroke="#425270"/>${paths}<text x="28" y="82" fill="#8290aa" font-size="10">Iteration →</text></svg>`
+  }
+  function ppcSvg(){
+    const curve=(shift,scale,wiggle)=>{let d='';for(let i=0;i<=100;i++){const x=28+i*5.35;const z=(i-50-shift)/scale;const y=128-95*Math.exp(-.5*z*z)*(1+wiggle*Math.sin(i*.22));d+=(i?'L':'M')+x.toFixed(1)+','+y.toFixed(1)}return d};
+    let sims='';[-2,1,3,-4,0].forEach((s,j)=>sims+=`<path d="${curve(s,18+j*.7,.025)}" fill="none" stroke="#78a6ff" stroke-width="1.6" opacity=".38"/>`);
+    return `<svg viewBox="0 0 600 155" role="img" aria-label="Posterior predictive check mit ähnlichen beobachteten und simulierten Verteilungen"><line x1="28" y1="130" x2="566" y2="130" stroke="#425270"/>${sims}<path d="${curve(0,18,.05)}" fill="none" stroke="#eef3ff" stroke-width="3"/><text x="235" y="149" fill="#8290aa" font-size="11">Lieferzeit (min) →</text></svg>`
+  }
+  function residualSvg(){
+    let pts='';
+    const zeroY=80;
+    const cols=26, rows=4;
+    for(let col=0;col<cols;col++){
+      const xBase=42+col*(516/(cols-1));
+      const xNorm=(col-(cols-1)/2)/((cols-1)/2);
+      const curve=3.9*(xNorm*xNorm)-1.55;
+      for(let row=0;row<rows;row++){
+        const jitterX=((row%2===0?-1:1)*(1.1+row*.55));
+        const noise=((col*17+row*23)%9-4)*0.22;
+        const resid=curve+noise+(row-1.5)*0.16;
+        const y=zeroY-resid*11.5;
+        pts+=`<circle cx="${(xBase+jitterX).toFixed(1)}" cy="${y.toFixed(1)}" r="3.2" fill="#9bb7ea" opacity=".72"/>`;
+      }
+    }
+    return `<svg viewBox="0 0 600 170" role="img" aria-label="Residualplot mit klar erkennbarem U-förmigem Muster"><line x1="42" y1="80" x2="558" y2="80" stroke="#667897" stroke-dasharray="5 5"/><line x1="42" y1="18" x2="42" y2="145" stroke="#425270"/><line x1="42" y1="145" x2="558" y2="145" stroke="#425270"/>${pts}<path id="trendPath" d="M42,35 Q300,128 558,35" fill="none" stroke="#ff8585" stroke-width="4" opacity="0" style="transition:opacity .2s"/><text x="245" y="164" fill="#8290aa" font-size="11">ŷ →</text><text x="8" y="84" fill="#8290aa" font-size="11">0</text></svg>`
+  }
+  function seedShuffle(a,seed){const out=[...a];let s=seed*2654435761>>>0;const rnd=()=>{s+=0x6D2B79F5;let t=s;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296};for(let i=out.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[out[i],out[j]]=[out[j],out[i]]}return out}
+  function esc(s){return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+})();
+</script>
+</body>
+</html>
