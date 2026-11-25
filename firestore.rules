@@ -1,0 +1,222 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 0: Global Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Reusable Hardened Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function hasValidParentUser(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId))
+        && get(/databases/$(database)/documents/users/$(userId)).data.uid == request.auth.uid;
+    }
+
+    // Pillar 2: Validation Blueprints (synchronized with firebase-blueprint.json)
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'createdAt', 'updatedAt'])
+        && data.uid is string
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && data.displayName is string
+        && data.displayName.size() >= 0
+        && data.displayName.size() <= 100
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidJourneyProgress(data, userId) {
+      return data.keys().hasAll(['userId', 'stageIndex', 'completedCheckIds', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'stageIndex', 'completedCheckIds', 'createdAt', 'updatedAt'])
+        && data.userId is string
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && data.userId == userId
+        && data.stageIndex is int
+        && data.stageIndex >= 0
+        && data.stageIndex <= 20
+        && data.completedCheckIds is list
+        && data.completedCheckIds.size() <= 50
+        && (
+          data.completedCheckIds.size() == 0
+          || (
+            data.completedCheckIds[0] is string
+            && data.completedCheckIds[0].size() >= 1
+            && data.completedCheckIds[0].size() <= 64
+          )
+        )
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidQuizItem(data, userId, itemId) {
+      return data.keys().hasAll(['userId', 'itemId', 'rightCount', 'wrongCount', 'lastResult', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'itemId', 'rightCount', 'wrongCount', 'lastResult', 'createdAt', 'updatedAt'])
+        && data.userId is string
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && data.userId == userId
+        && data.itemId is string
+        && isValidId(data.itemId)
+        && data.itemId == itemId
+        && data.rightCount is int
+        && data.rightCount >= 0
+        && data.rightCount <= 10000
+        && data.wrongCount is int
+        && data.wrongCount >= 0
+        && data.wrongCount <= 10000
+        && data.lastResult is int
+        && (data.lastResult == 0 || data.lastResult == 1)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Collection 1: /users/{userId} (Strictly Private Owner Profile)
+    match /users/{userId} {
+      allow get: if isSignedIn()
+        && isValidId(userId)
+        && isOwner(userId);
+
+      allow list: if false;
+
+      allow create: if isVerified()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerified()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt']);
+
+      allow delete: if false;
+
+      // Collection 2: /users/{userId}/progress/{progressId}
+      match /progress/{progressId} {
+        allow get: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(progressId)
+          && progressId == 'journey'
+          && isOwner(userId)
+          && hasValidParentUser(userId);
+
+        allow list: if false;
+
+        allow create: if isVerified()
+          && isValidId(userId)
+          && isValidId(progressId)
+          && progressId == 'journey'
+          && isOwner(userId)
+          && isValidJourneyProgress(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasValidParentUser(userId);
+
+        allow update: if isVerified()
+          && isValidId(userId)
+          && isValidId(progressId)
+          && progressId == 'journey'
+          && isOwner(userId)
+          && isValidJourneyProgress(incoming(), userId)
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            // Action: Advance or select stage
+            incoming().diff(existing()).affectedKeys().hasOnly(['stageIndex', 'updatedAt'])
+            // Action: Mark mini-check passed
+            || incoming().diff(existing()).affectedKeys().hasOnly(['completedCheckIds', 'updatedAt'])
+            // Action: Sync merged local + cloud journey state
+            || incoming().diff(existing()).affectedKeys().hasOnly(['stageIndex', 'completedCheckIds', 'updatedAt'])
+          )
+          && hasValidParentUser(userId);
+
+        allow delete: if isVerified()
+          && isValidId(userId)
+          && isValidId(progressId)
+          && progressId == 'journey'
+          && isOwner(userId)
+          && hasValidParentUser(userId);
+      }
+
+      // Collection 3: /users/{userId}/quizItems/{itemId}
+      match /quizItems/{itemId} {
+        allow get: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(itemId)
+          && isOwner(userId)
+          && hasValidParentUser(userId);
+
+        // Pillar 8: Secure List Query (no get()/exists() in allow list)
+        allow list: if isSignedIn()
+          && isOwner(userId)
+          && resource.data.userId == request.auth.uid;
+
+        allow create: if isVerified()
+          && isValidId(userId)
+          && isValidId(itemId)
+          && isOwner(userId)
+          && isValidQuizItem(incoming(), userId, itemId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasValidParentUser(userId);
+
+        allow update: if isVerified()
+          && isValidId(userId)
+          && isValidId(itemId)
+          && isOwner(userId)
+          && isValidQuizItem(incoming(), userId, itemId)
+          && incoming().userId == existing().userId
+          && incoming().itemId == existing().itemId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            // Action: Record answer or merge counters
+            incoming().diff(existing()).affectedKeys().hasOnly(['rightCount', 'lastResult', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['wrongCount', 'lastResult', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['rightCount', 'wrongCount', 'lastResult', 'updatedAt'])
+          )
+          && hasValidParentUser(userId);
+
+        allow delete: if isVerified()
+          && isValidId(userId)
+          && isValidId(itemId)
+          && isOwner(userId)
+          && hasValidParentUser(userId);
+      }
+    }
+  }
+}

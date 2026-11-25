@@ -1,0 +1,5 @@
+{
+  "name": "DA Klausurtrainer",
+  "description": "Interaktiver Klausurtrainer für Datenanalyse (Bayes-Regression mit R, stan_glm, logit, LOO, daatools) mit Multiple-Choice-Fragen, Karteikarten und Fehlerwiederholung.",
+  "requestFramePermissions": []
+}
