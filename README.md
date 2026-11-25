@@ -46,7 +46,7 @@ Lernmaterial zur LV **Datenanalyse** (rstanarm `stan_glm`, daatools) mit dem Zie
 - `daten/`: Datensätze (CSV) + `daatools_0.8.tar.gz`
 
 ## 📱 Am Handy lernen
-- **Quiz-App** (interaktiv, Fortschritt + Fehlerwiederholung): als privates Claude-Artifact veröffentlicht. Den Link findest du in der Abschlussnachricht bzw. unter claude.ai → Artifacts. Lokal: `app/quiz.html` im Browser öffnen.
+- **Quiz-App** (interaktiv, Fortschritt + Fehlerwiederholung): **https://claude.ai/artifact/54iQ4mv4i4oE5MKqvAqR6b** (privat, nur mit deinem Claude-Login sichtbar). Lokal: `app/quiz.html` im Browser öffnen.
 - **GitHub-App**: Markdown wird schön dargestellt, `<details>`-Lösungen lassen sich antippen.
 - **ChatGPT/Claude als Prüfer**: siehe **[CHATGPT-TUTOR.md](CHATGPT-TUTOR.md)** (Connector einrichten, Projekt-Prompt, Beispiel-Prompts).
 
