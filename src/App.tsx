@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Sun, Moon, AlertCircle, X } from 'lucide-react';
 import { TopBar, ActiveView } from './components/TopBar';
+import { BasicsView } from './components/BasicsView';
 import { JourneyView } from './components/JourneyView';
 import { QuizTrainerView } from './components/QuizTrainerView';
 import { GlossaryView } from './components/GlossaryView';
@@ -11,7 +12,12 @@ import {
 } from './contexts/FirebaseProgressContext';
 
 const AppShell: React.FC = () => {
-  const [activeView, setActiveView] = useState<ActiveView>('lernreise');
+  const { journey, selectStage, markCheckPassed, authError, clearAuthError } =
+    useFirebaseProgress();
+
+  const [activeView, setActiveView] = useState<ActiveView>(() =>
+    journey.stageIndex > 0 ? 'lernreise' : 'grundbegriffe'
+  );
   const [quizDeckOverride, setQuizDeckOverride] = useState<string | undefined>(undefined);
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     try {
@@ -23,9 +29,6 @@ const AppShell: React.FC = () => {
     }
     return false;
   });
-
-  const { journey, selectStage, markCheckPassed, authError, clearAuthError } =
-    useFirebaseProgress();
 
   useEffect(() => {
     const root = document.documentElement;
@@ -47,6 +50,11 @@ const AppShell: React.FC = () => {
   const handleOpenQuizDeck = (deckId: string) => {
     setQuizDeckOverride(deckId);
     setActiveView('quiz');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleOpenBasics = () => {
+    setActiveView('grundbegriffe');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -83,6 +91,14 @@ const AppShell: React.FC = () => {
       )}
 
       <div className="flex-1">
+        {activeView === 'grundbegriffe' && (
+          <BasicsView
+            completedChecks={journey.completedChecks}
+            onMarkCheckPassed={markCheckPassed}
+            onJumpToJourneyStage={handleSelectStage}
+          />
+        )}
+
         {activeView === 'lernreise' && (
           <JourneyView
             activeStageIndex={journey.stageIndex}
@@ -90,6 +106,7 @@ const AppShell: React.FC = () => {
             completedChecks={journey.completedChecks}
             onMarkCheckPassed={markCheckPassed}
             onOpenQuizDeck={handleOpenQuizDeck}
+            onOpenBasics={handleOpenBasics}
           />
         )}
 

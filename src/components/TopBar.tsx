@@ -1,7 +1,7 @@
 import React from 'react';
 import { AccountMenu } from './AccountMenu';
 
-export type ActiveView = 'lernreise' | 'quiz' | 'glossar';
+export type ActiveView = 'grundbegriffe' | 'lernreise' | 'quiz' | 'glossar';
 
 interface TopBarProps {
   activeView: ActiveView;
@@ -10,6 +10,7 @@ interface TopBarProps {
 
 export const TopBar: React.FC<TopBarProps> = ({ activeView, onSelectView }) => {
   const navItems: { id: ActiveView; label: string; mobileLabel: string }[] = [
+    { id: 'grundbegriffe', label: 'Grundbegriffe', mobileLabel: 'Basics' },
     { id: 'lernreise', label: 'Lernreise', mobileLabel: 'Reise' },
     { id: 'quiz', label: 'Karten & Quiz', mobileLabel: 'Quiz' },
     { id: 'glossar', label: 'Glossar', mobileLabel: 'Glossar' },
@@ -21,14 +22,16 @@ export const TopBar: React.FC<TopBarProps> = ({ activeView, onSelectView }) => {
         {/* Zone 1: Single-element Brand Wordmark */}
         <button
           type="button"
-          onClick={() => onSelectView('lernreise')}
+          onClick={() => onSelectView('grundbegriffe')}
+          aria-label="DA Lernreise Startseite"
           className="font-display font-bold text-sm sm:text-lg tracking-tight text-[#0E1E25] dark:text-[#EEF4F7] whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-[#0F6B75] rounded"
         >
-          DA Lernreise
+          <span className="hidden sm:inline">DA Lernreise</span>
+          <span className="sm:hidden">DA</span>
         </button>
 
         {/* Zone 2: Clean single-line text navigation links */}
-        <nav aria-label="Hauptnavigation" className="flex items-center gap-3 sm:gap-7">
+        <nav aria-label="Hauptnavigation" className="flex items-center gap-2.5 sm:gap-7">
           {navItems.map((item) => {
             const isActive = activeView === item.id;
             return (

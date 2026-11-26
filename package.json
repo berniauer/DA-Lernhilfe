@@ -8,7 +8,7 @@
     "start": "node server.js",
     "build": "vite build",
     "lint": "tsc --noEmit",
-    "test": "npx --yes tsx --test src/lib/stats.test.ts src/lib/glossary.test.ts src/lib/progressSync.test.ts firestore.rules.test.ts"
+    "test": "npx --yes tsx --test src/lib/stats.test.ts src/lib/glossary.test.ts src/lib/progressSync.test.ts src/lib/basicsHelpers.test.ts firestore.rules.test.ts"
   },
   "dependencies": {
     "@firebase/eslint-plugin-security-rules": "^0.0.2",

@@ -60,6 +60,7 @@ interface JourneyViewProps {
   completedChecks: Record<string, boolean>;
   onMarkCheckPassed: (checkId: string) => void;
   onOpenQuizDeck: (deckId: string) => void;
+  onOpenBasics?: () => void;
 }
 
 export const JourneyView: React.FC<JourneyViewProps> = ({
@@ -68,6 +69,7 @@ export const JourneyView: React.FC<JourneyViewProps> = ({
   completedChecks,
   onMarkCheckPassed,
   onOpenQuizDeck,
+  onOpenBasics,
 }) => {
   const { user, authBusy, signInWithGoogle } = useFirebaseProgress();
   const stage: JourneyStage = JOURNEY_STAGES[activeStageIndex] ?? JOURNEY_STAGES[0];
@@ -243,6 +245,19 @@ export const JourneyView: React.FC<JourneyViewProps> = ({
               <strong className="font-semibold text-[#0F6B75] dark:text-[#5DC2CC]">Fallbeispiel NovaChip: </strong>
               <RichText text={stage.storyLead} />
             </p>
+
+            {activeStageIndex === 0 && onOpenBasics && (
+              <div className="text-xs sm:text-sm text-[#4E626C] dark:text-[#96AEB9]">
+                Begriffe wie Prior, Likelihood oder Odds noch völlig neu?{' '}
+                <button
+                  type="button"
+                  onClick={onOpenBasics}
+                  className="font-semibold text-[#0F6B75] dark:text-[#5DC2CC] underline hover:no-underline cursor-pointer"
+                >
+                  Zuerst bei den Grundbegriffen (ohne Vorwissen) starten →
+                </button>
+              </div>
+            )}
           </section>
 
           {/* Section 1: Plain-German Greenhorn Explanation */}
